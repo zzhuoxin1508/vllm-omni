@@ -35,4 +35,3 @@ Key arguments:
 - `--audio_length`: audio duration in seconds.
 - `--num_inference_steps`: diffusion sampling steps.(more steps = higher quality, slower).
 - `--output`: path to save the generated WAV file.
-
