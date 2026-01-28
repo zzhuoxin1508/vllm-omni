@@ -43,7 +43,7 @@ dependencies = [
     "openai-whisper>=20250625",
     "imageio[ffmpeg]>=2.37.2",
     "onnxruntime>=1.19.0",
-    "sox",
+    "sox>=1.5.0",
     # "vllm==0.14.0",  # TODO: fix the entrypoints overwrite problem
 ]
 
