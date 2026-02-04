@@ -71,6 +71,10 @@ def _dummy_snapshot_download(model_id):
 
 
 def omni_snapshot_download(model_id) -> str:
+    # If it's already a local path, just return it
+    if os.path.exists(model_id):
+        return model_id
+    
     # TODO: this is just a workaround for quickly use modelscope, we should support
     # modelscope in weight loading feature instead of using `snapshot_download`
     if os.environ.get("VLLM_USE_MODELSCOPE", False):
@@ -78,19 +82,15 @@ def omni_snapshot_download(model_id) -> str:
 
         return snapshot_download(model_id)
         
-    # If it's already a local path, just return it
-    if os.path.exists(model_id):
-        return model_id
-        
     # For other cases (Hugging Face), perform a real download to ensure all
     # necessary files (including *.pt for audio/diffusion) are available locally
     # before stage workers are spawned. This prevents initialization timeouts.
     return download_weights_from_hf_specific(
-        model_id,
-        None,
+        model_name_or_path=model_id,
+        cache_dir=None,
         allow_patterns=[
-            "*.json", "*.bin", "*.safetensors", "*.pt", "*.txt", "*.model",
-            "*.yaml"
+            "**/*.json", "**/*.bin", "**/*.safetensors", "**/*.pt",
+            "**/*.txt", "**/*.model", "**/*.yaml"
         ],
         require_all=True,
     )
