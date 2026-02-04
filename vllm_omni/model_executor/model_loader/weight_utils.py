@@ -20,6 +20,7 @@ def download_weights_from_hf_specific(
     allow_patterns: list[str],
     revision: str | None = None,
     ignore_patterns: str | list[str] | None = None,
+    require_all: bool = False,
 ) -> str:
     """Download model weights from Hugging Face Hub. Users can specify the
     allow_patterns to download only the necessary weights.
@@ -35,6 +36,8 @@ def download_weights_from_hf_specific(
         ignore_patterns (Optional[Union[str, list[str]]]): The patterns to
             filter out the weight files. Files matched by any of the patterns
             will be ignored.
+        require_all (bool): If True, will download all patterns instead of
+            returning after the first one that contains files.
 
     Returns:
         str: The path to the downloaded model weights.
@@ -59,8 +62,8 @@ def download_weights_from_hf_specific(
                 **download_kwargs,
             )
             # If we have downloaded weights for this allow_pattern,
-            # we don't need to check the rest.
-            if any(Path(hf_folder).glob(allow_pattern)):
+            # we don't need to check the rest,unless require_all is set.
+            if not require_all and any(Path(hf_folder).glob(allow_pattern)):
                 break
         time_taken = time.perf_counter() - start_time
         if time_taken > 0.5:
