@@ -36,8 +36,7 @@ def download_weights_from_hf_specific(
         ignore_patterns (Optional[Union[str, list[str]]]): The patterns to
             filter out the weight files. Files matched by any of the patterns
             will be ignored.
-        require_all (bool): If True, will download all patterns instead of
-            returning after the first one that contains files.
+        require_all (bool): If True, will download all patterns.
 
     Returns:
         str: The path to the downloaded model weights.
