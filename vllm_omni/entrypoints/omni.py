@@ -42,6 +42,9 @@ from vllm_omni.entrypoints.utils import (
     resolve_model_config_path,
 )
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniPromptType, OmniSamplingParams
+from vllm_omni.model_executor.model_loader.weight_utils import (
+    download_weights_from_hf_specific,
+)
 from vllm_omni.outputs import OmniRequestOutput
 
 logger = init_logger(__name__)
@@ -74,8 +77,23 @@ def omni_snapshot_download(model_id) -> str:
         from modelscope.hub.snapshot_download import snapshot_download
 
         return snapshot_download(model_id)
-    else:
-        return _dummy_snapshot_download(model_id)
+        
+    # If it's already a local path, just return it
+    if os.path.exists(model_id):
+        return model_id
+        
+    # For other cases (Hugging Face), perform a real download to ensure all
+    # necessary files (including *.pt for audio/diffusion) are available locally
+    # before stage workers are spawned. This prevents initialization timeouts.
+    return download_weights_from_hf_specific(
+        model_id,
+        None,
+        allow_patterns=[
+            "*.json", "*.bin", "*.safetensors", "*.pt", "*.txt", "*.model",
+            "*.yaml"
+        ],
+        require_all=True,
+    )
 
 
 class OmniBase:
