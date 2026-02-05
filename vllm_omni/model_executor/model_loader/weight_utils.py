@@ -61,7 +61,7 @@ def download_weights_from_hf_specific(
                 **download_kwargs,
             )
             # If we have downloaded weights for this allow_pattern,
-            # we don't need to check the rest,unless require_all is set.
+            # we don't need to check the rest, unless require_all is set.
             if not require_all and any(Path(hf_folder).glob(allow_pattern)):
                 break
         time_taken = time.perf_counter() - start_time
