@@ -86,7 +86,7 @@ def omni_snapshot_download(model_id) -> str:
     return download_weights_from_hf_specific(
         model_name_or_path=model_id,
         cache_dir=None,
-        allow_patterns=["**/*.json", "**/*.bin", "**/*.safetensors", "**/*.pt","**/*.txt", "**/*.model", "**/*.yaml"],
+        allow_patterns=["**/*.json", "**/*.bin", "**/*.safetensors", "**/*.pt", "**/*.txt", "**/*.model", "**/*.yaml"],
         require_all=True,
     )
 
