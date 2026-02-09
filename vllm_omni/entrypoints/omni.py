@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import huggingface_hub
 import json
 import multiprocessing as mp
 import os
@@ -83,12 +84,16 @@ def omni_snapshot_download(model_id) -> str:
     # For other cases (Hugging Face), perform a real download to ensure all
     # necessary files (including *.pt for audio/diffusion) are available locally
     # before stage workers are spawned. This prevents initialization timeouts.
-    return download_weights_from_hf_specific(
-        model_name_or_path=model_id,
-        cache_dir=None,
-        allow_patterns=["*"],
-        require_all=True,
-    )
+    try:
+        return download_weights_from_hf_specific(
+            model_name_or_path=model_id,
+            cache_dir=None,
+            allow_patterns=["*"],
+            require_all=True,
+        )
+    except huggingface_hub.errors.RepositoryNotFoundError:
+        logger.warning(f"Repository not found for '{model_id}'.")
+        return model_id
 
 
 class OmniBase:
