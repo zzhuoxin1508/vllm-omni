@@ -40,10 +40,10 @@ from vllm_omni.entrypoints.utils import (
     resolve_model_config_path,
 )
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniPromptType, OmniSamplingParams
+from vllm_omni.metrics import OrchestratorAggregator, StageRequestStats
 from vllm_omni.model_executor.model_loader.weight_utils import (
     download_weights_from_hf_specific,
 )
-from vllm_omni.metrics import OrchestratorAggregator, StageRequestStats
 from vllm_omni.outputs import OmniRequestOutput
 
 logger = init_logger(__name__)
