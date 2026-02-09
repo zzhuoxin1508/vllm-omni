@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-import huggingface_hub
 import json
 import multiprocessing as mp
 import os
@@ -12,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pprint import pformat
 from typing import Any, Literal, overload
-
+import huggingface_hub
 from omegaconf import OmegaConf
 from tqdm.auto import tqdm
 from vllm import SamplingParams
