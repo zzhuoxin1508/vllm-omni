@@ -52,20 +52,31 @@ def download_weights_from_hf_specific(
     # downloading the same model weights at the same time.
     with get_lock(model_name_or_path, cache_dir):
         start_time = time.perf_counter()
-        for allow_pattern in allow_patterns:
+        if require_all:
             hf_folder = snapshot_download(
                 model_name_or_path,
-                allow_patterns=allow_pattern,
+                allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
                 cache_dir=cache_dir,
                 revision=revision,
                 local_files_only=local_only,
                 **download_kwargs,
             )
-            # If we have downloaded weights for this allow_pattern,
-            # we don't need to check the rest, unless require_all is set.
-            if not require_all and any(Path(hf_folder).glob(allow_pattern)):
-                break
+        else:
+            for allow_pattern in allow_patterns:
+                hf_folder = snapshot_download(
+                    model_name_or_path,
+                    allow_patterns=allow_pattern,
+                    ignore_patterns=ignore_patterns,
+                    cache_dir=cache_dir,
+                    revision=revision,
+                    local_files_only=local_only,
+                    **download_kwargs,
+                )
+                # If we have downloaded weights for this allow_pattern,
+                # we don't need to check the rest, unless require_all is set.
+                if any(Path(hf_folder).glob(allow_pattern)):
+                    break
         time_taken = time.perf_counter() - start_time
         if time_taken > 0.5:
             logger.info(
