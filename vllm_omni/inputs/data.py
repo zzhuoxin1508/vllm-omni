@@ -237,6 +237,10 @@ class OmniDiffusionSamplingParams:
     trajectory_timesteps: list[torch.Tensor] | None = None
     trajectory_latents: torch.Tensor | None = None
 
+    # Output type control: when set to "latent", pipelines that support it
+    # will skip VAE decoding and return raw latent tensors.
+    output_type: str | None = None
+
     # Extra parameters that might be needed by specific pipeline implementations
     extra_args: dict[str, Any] = field(default_factory=dict)
 
