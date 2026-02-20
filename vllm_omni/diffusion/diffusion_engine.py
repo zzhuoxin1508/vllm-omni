@@ -92,10 +92,19 @@ class DiffusionEngine:
                 for i, prompt in enumerate(request.prompts)
             ]
 
-        postprocess_start_time = time.time()
-        outputs = self.post_process_func(output.output) if self.post_process_func is not None else output.output
-        postprocess_time = time.time() - postprocess_start_time
-        logger.info(f"Post-processing completed in {postprocess_time:.4f} seconds")
+              # When output_type="latent", skip post-processing and return raw latent
+        is_latent_output = getattr(request.sampling_params, "output_type", None) == "latent"
+
+        if is_latent_output:
+            outputs = []
+            raw_latents = output.output
+            postprocess_time = 0.0
+        else:
+            postprocess_start_time = time.time()
+            outputs = self.post_process_func(output.output) if self.post_process_func is not None else output.output
+            raw_latents = output.trajectory_latents
+            postprocess_time = time.time() - postprocess_start_time
+            logger.info(f"Post-processing completed in {postprocess_time:.4f} seconds")
 
         # Convert to OmniRequestOutput format
         # Ensure outputs is a list
