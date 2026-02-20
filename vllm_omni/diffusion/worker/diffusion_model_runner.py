@@ -10,9 +10,11 @@ model-related operations.
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Iterable
 from contextlib import nullcontext
+from typing import Any
 
 import torch
 from torch.profiler import record_function
@@ -193,7 +195,12 @@ class DiffusionModelRunner:
 
         with set_forward_context(vllm_config=self.vllm_config, omni_diffusion_config=self.od_config):
             with record_function("pipeline_forward"):
-                output = self.pipeline.forward(req)
+                forward_kwargs: dict[str, Any] = {}
+                if req.sampling_params.output_type is not None:
+                    sig = inspect.signature(self.pipeline.forward)
+                    if "output_type" in sig.parameters:
+                        forward_kwargs["output_type"] = req.sampling_params.output_type
+                output = self.pipeline.forward(req, **forward_kwargs)
 
             # NOTE:
             if self.od_config.cache_backend == "cache_dit" and self.od_config.enable_cache_dit_summary:
