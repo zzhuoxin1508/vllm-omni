@@ -43,4 +43,3 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 def log_logo() -> None:
     logo = LOGO if current_formatter_type(logger) == "color" else _ANSI_RE.sub("", LOGO)
     logger.info(logo)
-
