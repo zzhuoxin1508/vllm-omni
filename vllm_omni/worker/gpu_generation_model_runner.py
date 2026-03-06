@@ -100,7 +100,7 @@ class GPUGenerationModelRunner(OmniGPUModelRunner):
             record_function_or_nullcontext("gpu_model_runner: preprocess"),
             self.synchronize_input_prep(),
         ):
-            if self.model_config.async_chunk:
+            if self.model_config.async_chunk and num_scheduled_tokens:
                 self._update_request_states(scheduler_output)
             self._update_states(scheduler_output)
             if not scheduler_output.total_num_scheduled_tokens:
@@ -250,6 +250,9 @@ class GPUGenerationModelRunner(OmniGPUModelRunner):
                 intermediate_tensors,
             )
 
+            # [Omni] Pass token counts per request for code2wav output slicing
+            model_kwargs["seq_token_counts"] = tokens
+
         # Set cudagraph mode to none if calc_kv_scales is true.
         # KV scales calculation involves dynamic operations that are incompatible
         # with CUDA graph capture.
@@ -257,10 +260,6 @@ class GPUGenerationModelRunner(OmniGPUModelRunner):
             cudagraph_mode = CUDAGraphMode.NONE
             # Mark KV scales as calculated after the first forward pass
             self.calculate_kv_scales = False
-
-        if ubatch_slices_padded is None:
-            # reuse ubatch_slices_padded for code2wav batching
-            ubatch_slices_padded = tokens
 
         # Run the model.
         # Use persistent buffers for CUDA graphs.
@@ -657,6 +656,16 @@ class GPUGenerationModelRunner(OmniGPUModelRunner):
             else:
                 input_ids = self.input_ids.gpu[:num_tokens_padded]
                 inputs_embeds = None
+
+            # Some generation-stage models (e.g. MammothModa2DiTPipeline) require
+            # model-specific runtime information (such as image size and conditioning
+            # embeddings) even during the dummy profiling run that vLLM uses to
+            # estimate KV-cache capacity.  get_dummy_runtime_additional_information
+            # provides placeholder values of the correct shape so that the profiling
+            # run does not raise an error due to missing inputs.
+            if hasattr(self.model, "get_dummy_runtime_additional_information"):
+                runtime_addi = self.model.get_dummy_runtime_additional_information(num_reqs)
+                model_kwargs["runtime_additional_information"] = runtime_addi
 
             if self.uses_mrope:
                 positions = self.mrope_positions.gpu[:, :num_tokens_padded]

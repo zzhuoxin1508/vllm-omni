@@ -1,25 +1,27 @@
 
-# Metrics vLLM-Omni:
+# Metrics
 
 You can use these metrics in production to monitor the health and performance of the vLLM-omni system. Typical scenarios include:
+
 - **Performance Monitoring**: Track throughput (e.g., `e2e_avg_tokens_per_s`), latency (e.g., `e2e_total_ms`), and resource utilization to verify that the system meets expected standards.
+
 - **Debugging and Troubleshooting**: Use detailed per-request metrics to diagnose issues, such as high transfer times or unexpected token counts.
 
 ## How to Enable and View Metrics
 
-### 1. Start the Service with Metrics Logging
+### Start the Service with Metrics Logging
 
 ```bash
 vllm serve /workspace/models/Qwen3-Omni-30B-A3B-Instruct --omni --port 8014 --log-stats
 ```
 
-### 2. Send a Request
+### Send a Request
 
 ```bash
 python openai_chat_completion_client_for_multimodal_generation.py --query-type use_image
 ```
 
-### 3. What You Will See
+### What You Will See
 
 With `--log-stats` enabled, the server will output detailed metrics logs after each request. Example output:
 
@@ -67,12 +69,31 @@ With `--log-stats` enabled, the server will output detailed metrics logs after e
 | rx_decode_time_ms   | 111.865     | 31.706     |
 | in_flight_time_ms   | 2.015       | 2.819      |
 
+### DiffusionStats
 
-These logs include:
+| Field                           |      Value |
+|---------------------------------|------------|
+| batch_id                        |          1 |
+| batch_size                      |          1 |
+| diffusion_engine_exec_time_ms   | 16,363.419 |
+| diffusion_engine_total_time_ms  | 16,234.849 |
+| image_num                       |      1.000 |
+| num_inference_steps             |     50.000 |
+| postprocess_time_ms             |     67.685 |
+| preprocess_time_ms              |     60.106 |
+| resolution                      |    640.000 |
+| stage_gen_time_ms               | 16,363.714 |
+
 - **Overall summary**: total requests, wall time, average tokens/sec, etc.
+
 - **E2E table**: per-request latency and token counts.
+
 - **Stage table**: per-stage batch and timing details.
+
 - **Transfer table**: data transfer and timing for each edge.
+
+- **DiffusionStats**:preprocessing time, model execution time, postprocessing time, generated images, resolution, and inference steps.
+
 
 You can use these logs to monitor system health, debug performance, and analyze request-level metrics as described above.
 
@@ -87,6 +108,8 @@ For **online inference** (serving mode), the summary is always per-request. `e2e
 
 ## Parameter Details
 
+### Summary Metrics
+
 | Field                     | Meaning                                                                                       |
 |---------------------------|----------------------------------------------------------------------------------------------|
 | `e2e_requests`            | Number of completed requests.                                                                |
@@ -98,7 +121,7 @@ For **online inference** (serving mode), the summary is always per-request. `e2e
 
 ---
 
-## E2E Table (per request)
+### E2E Table (per request)
 
 | Field                     | Meaning                                                               |
 |---------------------------|-----------------------------------------------------------------------|
@@ -110,7 +133,7 @@ For **online inference** (serving mode), the summary is always per-request. `e2e
 
 ---
 
-## Stage Table (per stage event / request)
+### Stage Table (per stage event / request)
 
 | Field                     | Meaning                                                                                         |
 |---------------------------|-------------------------------------------------------------------------------------------------|
@@ -122,10 +145,15 @@ For **online inference** (serving mode), the summary is always per-request. `e2e
 | `image_num`               | Number of images generated (for diffusion/image stages).                                        |
 | `resolution`              | Image resolution (for diffusion/image stages).                                                                  |
 | `postprocess_time_ms` | Diffusion/image: post-processing time in ms.                                                    |
+| `preprocess_time_ms`             | Diffusion/image: pre-processing time in ms (before model execution).                                             |
+| `diffusion_engine_exec_time_ms`  | Diffusion/image: model execution time in ms, excluding pre-processing and post-processing.                       |
+| `diffusion_engine_total_time_ms` | Diffusion/image: total diffusion engine time in ms, including pre-processing, model execution, and post-processing. |
+| `num_inference_steps`            | Number of inference steps for diffusion generation.                                                              |
+
 
 ---
 
-## Transfer Table (per edge / request)
+### Transfer Table (per edge / request)
 
 | Field                | Meaning                                                                   |
 |----------------------|---------------------------------------------------------------------------|
@@ -135,31 +163,44 @@ For **online inference** (serving mode), the summary is always per-request. `e2e
 | `in_flight_time_ms`  | In-flight time in ms.                                                     |
 
 
-## Expectation of the Numbers (Verification)
+
+
+### Expectation of the Numbers (Verification)
 
 **Formulas:**
+
 - `e2e_total_tokens = Stage0's num_tokens_in + sum(all stages' num_tokens_out)`
+
 - `transfers_total_time_ms = sum(tx_time_ms + rx_decode_time_ms + in_flight_time_ms)` for every edge
 
 **Using the example above:**
 
-### e2e_total_tokens
+**e2e_total_tokens**
+
 - Stage0's `num_tokens_in`: **4,860**
 - Stage0's `num_tokens_out`: **67**
 - Stage1's `num_tokens_out`: **275**
 - Stage2's `num_tokens_out`: **0**
 
-So,
-```
-e2e_total_tokens = 4,860 + 67 + 275 + 0 = 5,202
-```
-This matches the table value: `e2e_total_tokens = 5,202`.
+so `e2e_total_tokens = 4,860 + 67 + 275 + 0 = 5,202`, which matches the table value `e2e_total_tokens`.
 
-### transfers_total_time_ms
+**transfers_total_time_ms**
+
 For each edge:
+
 - 0->1: tx_time_ms (**78.701**) + rx_decode_time_ms (**111.865**) + in_flight_time_ms (**2.015**) = **192.581**
+
 - 1->2: tx_time_ms (**18.790**) + rx_decode_time_ms (**31.706**) + in_flight_time_ms (**2.819**) = **53.315**
 
-Sum: 192.581 + 53.315 = **245.896**
+192.581 + 53.315 = **245.896** = transfers_total_time_ms, which matches the calculation (difference is due to rounding)
 
-The table shows `transfers_total_time_ms = 245.895`, which matches the calculation (difference is due to rounding).
+**diffusion_engine_total_time_ms**
+
+- preprocess_time_ms: Time spent on input preprocessing
+- diffusion_engine_exec_time_ms: Pure model execution time
+- postprocess_time_ms: Time spent on output postprocessing
+- diffusion_engine_total_time_ms: Total time spent in the diffusion engine
+
+so `diffusion_engine_total_time_ms` = `diffusion_engine_exec_time_ms` + `preprocess_time_ms` + `postprocess_time_ms`
+                               = **16,363.419** + **60.106** + **67.685**
+                               = **16,491.210**
