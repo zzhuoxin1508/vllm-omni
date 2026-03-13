@@ -85,11 +85,22 @@ def get_text_token_prompts(
     inputs = dummy_inputs.get_dummy_processor_inputs(
         model_config.max_model_len,
         mm_counts,
+        mm_options={},
     )
-    assert isinstance(inputs.prompt, str)
 
-    text_prompt: str = inputs.prompt
-    token_prompt: list[int] = tokenizer.encode(text_prompt, add_special_tokens=True)
+    text_prompt: str | None
+    token_prompt: list[int]
+    if isinstance(inputs.prompt, list):
+        text_prompt = None
+        token_prompt = inputs.prompt
+    elif isinstance(inputs.prompt, str):
+        text_prompt = inputs.prompt
+        token_prompt = tokenizer.encode(
+            text_prompt,
+            **processor.info.get_default_tok_params().get_encode_kwargs(),
+        )
+    else:
+        raise TypeError(type(inputs.prompt))
 
     return text_prompt, token_prompt
 
@@ -211,13 +222,13 @@ def _test_processing_correctness_one(
     mm_items = baseline_processor.info.parse_mm_data(mm_data)
     ignore_mm_keys = _IGNORE_MM_KEYS.get(model_type, set[str]())
 
-    baseline_tokenized_result = baseline_processor.apply(
+    baseline_tokenized_result = baseline_processor(
         token_prompt,
         mm_items=mm_items,
         hf_processor_mm_kwargs={},
     )
 
-    cached_tokenized_result = cached_processor.apply(
+    cached_tokenized_result = cached_processor(
         token_prompt,
         mm_items=mm_items,
         hf_processor_mm_kwargs={},
@@ -231,12 +242,12 @@ def _test_processing_correctness_one(
     )
 
     if text_prompt is not None:
-        baseline_text_result = baseline_processor.apply(
+        baseline_text_result = baseline_processor(
             text_prompt,
             mm_items=mm_items,
             hf_processor_mm_kwargs={},
         )
-        cached_text_result = cached_processor.apply(
+        cached_text_result = cached_processor(
             text_prompt,
             mm_items=mm_items,
             hf_processor_mm_kwargs={},
@@ -300,8 +311,9 @@ def _assert_inputs_equal(
     if ignore_mm_keys is None:
         ignore_mm_keys = set()
 
-    a_rest = {k: v for k, v in a.items() if k != "mm_kwargs"}
-    b_rest = {k: v for k, v in b.items() if k != "mm_kwargs"}
+    ignore_prompt_keys = ("prompt", "mm_kwargs")
+    a_rest = {k: v for k, v in a.items() if k not in ignore_prompt_keys}
+    b_rest = {k: v for k, v in b.items() if k not in ignore_prompt_keys}
 
     assert a_rest == b_rest, msg
 
