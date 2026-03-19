@@ -80,24 +80,24 @@ def main(args):
 
     omni_generator = omni.generate(inputs, sampling_params_list=None)
     for stage_outputs in omni_generator:
-        for output in stage_outputs.request_output:
-            request_id = output.request_id
-            audio_data = output.outputs[0].multimodal_output["audio"]
-            if isinstance(audio_data, list):
-                audio_tensor = torch.cat(audio_data, dim=-1)
-            else:
-                audio_tensor = audio_data
+        output = stage_outputs.request_output
+        request_id = output.request_id
+        audio_data = output.outputs[0].multimodal_output["audio"]
+        if isinstance(audio_data, list):
+            audio_tensor = torch.cat(audio_data, dim=-1)
+        else:
+            audio_tensor = audio_data
 
-            sr_val = output.outputs[0].multimodal_output["sr"]
-            sample_rate = sr_val.item() if hasattr(sr_val, "item") else int(sr_val[-1])
+        sr_val = output.outputs[0].multimodal_output["sr"]
+        sample_rate = sr_val.item() if hasattr(sr_val, "item") else int(sr_val[-1])
 
-            audio_numpy = audio_tensor.float().detach().cpu().numpy()
-            if audio_numpy.ndim > 1:
-                audio_numpy = audio_numpy.flatten()
+        audio_numpy = audio_tensor.float().detach().cpu().numpy()
+        if audio_numpy.ndim > 1:
+            audio_numpy = audio_numpy.flatten()
 
-            output_wav = os.path.join(output_dir, f"chatterbox_{request_id}.wav")
-            sf.write(output_wav, audio_numpy, samplerate=sample_rate, format="WAV")
-            print(f"Request ID: {request_id}, Saved audio to {output_wav}")
+        output_wav = os.path.join(output_dir, f"chatterbox_{request_id}.wav")
+        sf.write(output_wav, audio_numpy, samplerate=sample_rate, format="WAV")
+        print(f"Request ID: {request_id}, Saved audio to {output_wav}")
 
 
 def parse_args():

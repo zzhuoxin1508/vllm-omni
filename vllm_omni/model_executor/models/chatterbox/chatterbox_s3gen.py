@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
+from safetensors.torch import load_file
 from transformers.utils.hub import cached_file
 from vllm.config import VllmConfig
 from vllm.forward_context import get_forward_context, is_forward_context_available
@@ -83,8 +84,10 @@ class ChatterboxS3Gen(nn.Module):
                 raise FileNotFoundError("s3gen.pt not found in model checkpoint")
             ckpt_dir = os.path.dirname(s3gen_path)
 
-            model = S3Token2Wav.from_pretrained(ckpt_dir, device=device)
-            model.eval()
+            weights_path = os.path.join(ckpt_dir, "s3gen_meanflow.safetensors")
+            model = S3Token2Wav(meanflow=True)
+            model.load_state_dict(load_file(weights_path), strict=True)
+            model.to(device).eval()
             self._s3gen_model = model
         except ImportError:
             raise ImportError(
@@ -147,6 +150,25 @@ class ChatterboxS3Gen(nn.Module):
         ids = input_ids.reshape(-1).to(dtype=torch.long)
         request_ids_list = self._split_request_ids(ids, kwargs.get("seq_token_counts"))
 
+        # Compute S3Gen ref_dict from ref_audio_path passed by T3 stage.
+        ref_dict = None
+        info_dicts = kwargs.get("runtime_additional_information") or []
+        for info in info_dicts:
+            if isinstance(info, dict) and "ref_dict" in info:
+                ref_audio_path = info["ref_dict"].get("ref_audio_path")
+                if ref_audio_path:
+                    try:
+                        import torchaudio
+                        wav, sr = torchaudio.load(ref_audio_path)
+                        wav = wav.mean(0).cpu().numpy()  # mono numpy
+                        dec_cond_len = 10 * S3GEN_SR  # same as ChatterboxTurboTTS.DEC_COND_LEN
+                        if len(wav) > dec_cond_len:
+                            wav = wav[:dec_cond_len]
+                        ref_dict = model.embed_ref(wav, sr, device=device)
+                    except Exception as e:
+                        logger.warning("Failed to compute S3Gen ref_dict: %s", e)
+                break
+
         audios: list[torch.Tensor] = []
         srs: list[torch.Tensor] = []
 
@@ -174,11 +196,17 @@ class ChatterboxS3Gen(nn.Module):
                     int(speech_tokens.max().item()),
                 )
 
+            # Remove OOV tokens and append silence (same as ChatterboxTurboTTS.generate).
+            S3GEN_SIL = 4299
+            speech_tokens = speech_tokens[speech_tokens < 6561]
+            silence = torch.tensor([S3GEN_SIL, S3GEN_SIL, S3GEN_SIL], dtype=torch.long, device=speech_tokens.device)
+            speech_tokens = torch.cat([speech_tokens, silence])
+
             # S3Gen expects tokens as (1, T) on the model device.
             tokens_2d = speech_tokens.unsqueeze(0).to(device=device)
 
             try:
-                wav = model.inference(tokens_2d)  # (1, samples) or (samples,)
+                wav, _ = model.inference(tokens_2d, ref_dict=ref_dict, n_cfm_timesteps=2)  # (1, samples)
                 if isinstance(wav, torch.Tensor):
                     wav_np = wav.float().detach().cpu().numpy().reshape(-1)
                 elif isinstance(wav, np.ndarray):

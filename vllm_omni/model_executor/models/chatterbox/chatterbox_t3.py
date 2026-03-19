@@ -77,9 +77,7 @@ class ChatterboxT3CondEnc(nn.Module):
         cond_prompt_speech_emb: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return conditioning sequence: [speaker_proj || cond_speech_emb]."""
-        spk = self.speaker_proj(speaker_emb)  # (1, hidden_size)
-        if spk.ndim == 2:
-            spk = spk.unsqueeze(1)  # (1, 1, hidden_size)
+        spk = self.speaker_proj(speaker_emb.view(-1, speaker_emb.shape[-1]))[:, None]  # (B, 1, hidden_size)
         if cond_prompt_speech_emb is not None:
             return torch.cat([spk, cond_prompt_speech_emb], dim=1)
         return spk
@@ -319,7 +317,7 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
 
         # Tokenize text.
         tokenizer = self._get_tokenizer()
-        text_tokens = tokenizer.encode(text, add_special_tokens=False)
+        text_tokens = tokenizer.encode(text, add_special_tokens=True)
         text_token_ids = torch.tensor(text_tokens, dtype=torch.long, device=device)
 
         # Text embedding.
@@ -369,16 +367,19 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
         wav, sr = torchaudio.load(ref_audio_path)
         if sr != S3_SR:
             wav = torchaudio.functional.resample(wav, sr, S3_SR)
-        wav = wav.mean(0, keepdim=True)  # mono
+        wav = wav.mean(0)  # mono, shape (N,)
+
+        assert wav.shape[-1] / S3_SR > 5.0, "Audio prompt must be longer than 5 seconds!"
 
         # Trim to ENC_COND_LEN.
         if wav.shape[-1] > ENC_COND_LEN:
-            wav = wav[..., :ENC_COND_LEN]
+            wav = wav[:ENC_COND_LEN]
 
-        wav = wav.to(device=device)
-        with torch.no_grad():
-            emb = voice_encoder(wav)  # (1, 256)
-        return emb
+        wav_np = wav.cpu().numpy()
+        wav_np = self._norm_loudness(wav_np, S3_SR)
+        # embeds_from_wavs: silence trim → mel → sliding window → LSTM → mean
+        emb = voice_encoder.embeds_from_wavs([wav_np], sample_rate=S3_SR)  # (1, 256)
+        return torch.from_numpy(emb).to(device=device, dtype=torch.float32)
 
     def _get_cond_prompt_speech_emb(self, ref_audio_path: str | None, device: torch.device) -> torch.Tensor | None:
         """Tokenize reference audio and embed as conditioning prompt."""
@@ -392,21 +393,20 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
         wav, sr = torchaudio.load(ref_audio_path)
         if sr != S3_SR:
             wav = torchaudio.functional.resample(wav, sr, S3_SR)
-        wav = wav.mean(0, keepdim=True)  # mono
+        wav = wav.mean(0)  # mono, shape (N,)
+        wav_np = self._norm_loudness(wav.cpu().numpy(), S3_SR)
+        wav = torch.from_numpy(wav_np).unsqueeze(0)  # (1, N)
 
-        # Pad to multiple of S3_TOKEN_HOP.
-        pad_len = S3_TOKEN_HOP - (wav.shape[-1] % S3_TOKEN_HOP)
-        if pad_len < S3_TOKEN_HOP:
-            wav = torch.nn.functional.pad(wav, (0, pad_len))
+        # Trim to ENC_COND_LEN before tokenizer (same as original).
+        if wav.shape[-1] > ENC_COND_LEN:
+            wav = wav[..., :ENC_COND_LEN]
 
+        plen = self.config.speech_cond_prompt_len
         wav = wav.to(device=device)
         with torch.no_grad():
-            tokens, _ = s3_tokenizer(wav.unsqueeze(0), max_len=None)  # (1, plen)
+            tokens, _ = s3_tokenizer(wav, max_len=plen)  # (1, plen)
 
-        # Trim to speech_cond_prompt_len.
-        plen = self.config.speech_cond_prompt_len
-        if tokens.shape[-1] > plen:
-            tokens = tokens[:, :plen]
+        tokens = torch.atleast_2d(tokens)
 
         # Embed the conditioning speech tokens.
         cond_emb = self.speech_emb(tokens.clamp(0, self.config.speech_vocab_size - 1))  # (1, plen, H)
@@ -423,7 +423,11 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
             ve_path = cached_file(self.model_path, "ve.pt")
             if ve_path is None:
                 raise FileNotFoundError("ve.pt not found in model checkpoint")
-            self._voice_encoder = VoiceEncoder.from_pretrained(ve_path, device=device)
+            ve = VoiceEncoder()
+            state = torch.load(ve_path, map_location="cpu", weights_only=True)
+            ve.load_state_dict(state)
+            ve.to(device).eval()
+            self._voice_encoder = ve
         except ImportError:
             logger.warning(
                 "chatterbox package not installed; using dummy VoiceEncoder. "
@@ -451,6 +455,21 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
             )
             self._s3_tokenizer = _DummyS3Tokenizer(device)
         return self._s3_tokenizer
+
+    @staticmethod
+    def _norm_loudness(wav: np.ndarray, sr: int, target_lufs: float = -27) -> np.ndarray:
+        """Normalize loudness to target LUFS (same as ChatterboxTurboTTS.norm_loudness)."""
+        try:
+            import pyloudnorm as ln
+            meter = ln.Meter(sr)
+            loudness = meter.integrated_loudness(wav)
+            gain_db = target_lufs - loudness
+            gain_linear = 10.0 ** (gain_db / 20.0)
+            if np.isfinite(gain_linear) and gain_linear > 0.0:
+                wav = wav * gain_linear
+        except Exception as e:
+            logger.warning(f"norm_loudness skipped: {e}")
+        return wav
 
     # -------------------- Weight loading --------------------
 
