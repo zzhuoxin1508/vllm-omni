@@ -2,6 +2,7 @@ async_chunk: true
 stage_args:
   - stage_id: 0
     stage_type: llm
+    is_comprehension: true
     runtime:
       devices: "0"
       max_batch_size: 1
@@ -54,7 +55,7 @@ stage_args:
       gpu_memory_utilization: 0.2
       distributed_executor_backend: "mp"
       max_num_batched_tokens: 8192
-      max_model_len: 32768
+      max_model_len: 8196
     engine_input_source: [0]
     final_output: true
     final_output_type: audio

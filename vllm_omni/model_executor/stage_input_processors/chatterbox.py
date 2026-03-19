@@ -19,6 +19,7 @@ def t3_to_s3gen_async_chunk(
     transfer_manager: Any,
     pooling_output: dict[str, Any],
     request: Any,
+    is_finished: bool = False,
 ) -> dict[str, Any] | None:
     """Buffer T3 speech tokens and send chunks to S3Gen.
 
@@ -45,7 +46,7 @@ def t3_to_s3gen_async_chunk(
             f"codec_left_context_frames={left_context_size}"
         )
 
-    finished = bool(request.is_finished())
+    finished = bool(is_finished)
 
     token = _extract_speech_token(pooling_output)
     if token is not None:

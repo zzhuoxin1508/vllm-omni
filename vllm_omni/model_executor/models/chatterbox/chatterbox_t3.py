@@ -65,7 +65,11 @@ class ChatterboxT3Cond:
 
 
 class ChatterboxT3CondEnc(nn.Module):
-    """Conditioning encoder: project speaker embedding + cond prompt speech."""
+    """Conditioning encoder: project speaker embedding + cond prompt speech.
+
+    Attribute name ``spkr_enc`` matches the original T3CondEnc so that
+    checkpoint keys (``cond_enc.spkr_enc.weight/bias``) load correctly.
+    """
 
     def __init__(self, speaker_embed_size: int, hidden_size: int):
         super().__init__()
@@ -324,10 +328,15 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
         text_embedded = self.text_emb(text_token_ids).unsqueeze(0)  # (1, T, H)
 
         # Speaker embedding from reference audio.
-        speaker_emb = self._get_speaker_embedding(ref_audio_path, device)  # (1, 256)
+        # VoiceEncoder outputs float32, but vLLM downcasts model weights to bfloat16.
+        # Must match dtype to avoid "mat1 and mat2 must have the same dtype" error.
+        model_dtype = self.cond_enc.speaker_proj.weight.dtype
+        speaker_emb = self._get_speaker_embedding(ref_audio_path, device).to(dtype=model_dtype)
 
         # Cond prompt speech tokens from reference audio.
-        cond_speech_emb = self._get_cond_prompt_speech_emb(ref_audio_path, device)  # (1, plen, H) or None
+        cond_speech_emb = self._get_cond_prompt_speech_emb(ref_audio_path, device)
+        if cond_speech_emb is not None:
+            cond_speech_emb = cond_speech_emb.to(dtype=model_dtype)
 
         # Conditioning encoder.
         cond_output = self.cond_enc(speaker_emb, cond_speech_emb)  # (1, 1+plen, H)
@@ -420,12 +429,13 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
         try:
             from chatterbox.models.voice_encoder import VoiceEncoder
 
-            ve_path = cached_file(self.model_path, "ve.pt")
+            from safetensors.torch import load_file
+
+            ve_path = cached_file(self.model_path, "ve.safetensors")
             if ve_path is None:
-                raise FileNotFoundError("ve.pt not found in model checkpoint")
+                raise FileNotFoundError("ve.safetensors not found in model checkpoint")
             ve = VoiceEncoder()
-            state = torch.load(ve_path, map_location="cpu", weights_only=True)
-            ve.load_state_dict(state)
+            ve.load_state_dict(load_file(ve_path))
             ve.to(device).eval()
             self._voice_encoder = ve
         except ImportError:
@@ -444,10 +454,8 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
         try:
             from chatterbox.models.s3tokenizer import S3Tokenizer
 
-            s3tok_path = cached_file(self.model_path, "s3tokenizer.pt")
-            if s3tok_path is None:
-                raise FileNotFoundError("s3tokenizer.pt not found in model checkpoint")
-            self._s3_tokenizer = S3Tokenizer.from_pretrained(s3tok_path, device=device)
+            # S3Tokenizer weights are built into the s3tokenizer package.
+            self._s3_tokenizer = S3Tokenizer().to(device)
         except ImportError:
             logger.warning(
                 "chatterbox package not installed; S3Tokenizer unavailable. "
@@ -480,7 +488,7 @@ class ChatterboxTurboT3ForGeneration(nn.Module):
             "text_emb.": "text_emb.",
             "speech_emb.": "speech_emb.",
             "speech_head.": "speech_head.",
-            "cond_enc.speaker_proj.": "cond_enc.speaker_proj.",
+            "cond_enc.spkr_enc.": "cond_enc.speaker_proj.",
         }
     )
 

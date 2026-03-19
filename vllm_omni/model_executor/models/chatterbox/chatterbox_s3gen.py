@@ -17,14 +17,12 @@ not through vLLM's standard weight loader.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
-from safetensors.torch import load_file
 from transformers.utils.hub import cached_file
 from vllm.config import VllmConfig
 from vllm.forward_context import get_forward_context, is_forward_context_available
@@ -76,18 +74,19 @@ class ChatterboxS3Gen(nn.Module):
         device = self.vllm_config.device_config.device
 
         try:
-            from chatterbox.models.s3gen import S3Token2Wav
+            from chatterbox.models.s3gen.s3gen import S3Token2Wav
 
-            # Load from HF hub / local path.
-            s3gen_path = cached_file(self.model_path, "s3gen.pt")
+            # Original turbo: S3Gen(meanflow=True) + s3gen_meanflow.safetensors
+            from safetensors.torch import load_file
+
+            s3gen_path = cached_file(self.model_path, "s3gen_meanflow.safetensors")
             if s3gen_path is None:
-                raise FileNotFoundError("s3gen.pt not found in model checkpoint")
-            ckpt_dir = os.path.dirname(s3gen_path)
+                raise FileNotFoundError("s3gen_meanflow.safetensors not found in model checkpoint")
 
-            weights_path = os.path.join(ckpt_dir, "s3gen_meanflow.safetensors")
             model = S3Token2Wav(meanflow=True)
-            model.load_state_dict(load_file(weights_path), strict=True)
-            model.to(device).eval()
+            model.load_state_dict(load_file(s3gen_path), strict=True)
+            model.to(device)
+            model.eval()
             self._s3gen_model = model
         except ImportError:
             raise ImportError(
@@ -161,7 +160,7 @@ class ChatterboxS3Gen(nn.Module):
                         import torchaudio
                         wav, sr = torchaudio.load(ref_audio_path)
                         wav = wav.mean(0).cpu().numpy()  # mono numpy
-                        dec_cond_len = 10 * S3GEN_SR  # same as ChatterboxTurboTTS.DEC_COND_LEN
+                        dec_cond_len = 10 * S3GEN_SR
                         if len(wav) > dec_cond_len:
                             wav = wav[:dec_cond_len]
                         ref_dict = model.embed_ref(wav, sr, device=device)
