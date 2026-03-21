@@ -116,7 +116,6 @@ class OmniGen2Attention(nn.Module):
             key = key.repeat_interleave(num_groups, dim=2)
             value = value.repeat_interleave(num_groups, dim=2)
 
-
         hidden_states = self.attn(
             query,
             key,
@@ -341,7 +340,6 @@ class LuminaFeedForward(nn.Module):
         ffn_dim_multiplier: float | None = None,
     ):
         super().__init__()
-        
 
         # custom hidden_size factor multiplier
         if ffn_dim_multiplier is not None:
