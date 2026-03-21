@@ -12,7 +12,9 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from einops import rearrange, repeat
 from torch.nn import RMSNorm
 from vllm.model_executor.layers.linear import (
+    MergedColumnParallelLinear,
     QKVParallelLinear,
+    RowParallelLinear,
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
@@ -21,8 +23,10 @@ from vllm_omni.diffusion.attention.layer import Attention
 logger = logging.getLogger(__name__)
 
 
-def swiglu(x, y):
-    return F.silu(x.float(), inplace=False).to(x.dtype) * y
+class SwiGLU(nn.Module):
+    def forward(self, x):
+        gate, up = x.chunk(2, dim=-1)
+        return F.silu(gate.float(), inplace=False).to(gate.dtype) * up
 
 
 class OmniGen2Attention(nn.Module):
@@ -53,7 +57,6 @@ class OmniGen2Attention(nn.Module):
         self.norm_k = RMSNorm(self.head_dim, eps=eps)
 
         self.to_out = nn.ModuleList([nn.Linear(dim, dim, bias=False)])
-
         self.attn = Attention(
             num_heads=num_heads,
             head_size=self.head_dim,
@@ -78,22 +81,19 @@ class OmniGen2Attention(nn.Module):
         Returns:
             torch.Tensor: Processed hidden states after attention computation
         """
-        batch_size, sequence_length, _ = hidden_states.shape
+        batch_size = hidden_states.shape[0]
 
         # Get Query-Key-Value Pair
         qkv, _ = self.to_qkv(hidden_states)
 
-        q_dim = self.num_heads * self.head_dim
-        kv_dim = self.num_kv_heads * self.head_dim
-
-        query = qkv[..., :q_dim]
-        key = qkv[..., q_dim : q_dim + kv_dim]
-        value = qkv[..., q_dim + kv_dim : q_dim + 2 * kv_dim]
+        q_size = self.num_heads * self.head_dim
+        kv_size = self.num_kv_heads * self.head_dim
+        query, key, value = qkv.split([q_size, kv_size, kv_size], dim=-1)
 
         # Reshape tensors for attention computation
-        query = query.view(batch_size, sequence_length, self.num_heads, self.head_dim)
-        key = key.view(batch_size, sequence_length, self.num_kv_heads, self.head_dim)
-        value = value.view(batch_size, sequence_length, self.num_kv_heads, self.head_dim)
+        query = query.unflatten(-1, (self.num_heads, -1))
+        key = key.unflatten(-1, (self.num_kv_heads, -1))
+        value = value.unflatten(-1, (self.num_kv_heads, -1))
 
         # Apply Query-Key normalization
         if self.norm_q is not None:
@@ -115,6 +115,7 @@ class OmniGen2Attention(nn.Module):
             num_groups = self.num_heads // self.num_kv_heads
             key = key.repeat_interleave(num_groups, dim=2)
             value = value.repeat_interleave(num_groups, dim=2)
+
 
         hidden_states = self.attn(
             query,
@@ -340,32 +341,32 @@ class LuminaFeedForward(nn.Module):
         ffn_dim_multiplier: float | None = None,
     ):
         super().__init__()
-        self.swiglu = swiglu
+        
 
         # custom hidden_size factor multiplier
         if ffn_dim_multiplier is not None:
             inner_dim = int(ffn_dim_multiplier * inner_dim)
         inner_dim = multiple_of * ((inner_dim + multiple_of - 1) // multiple_of)
 
-        self.linear_1 = nn.Linear(
+        self.gate_up_proj = MergedColumnParallelLinear(
             dim,
-            inner_dim,
+            [inner_dim, inner_dim],
             bias=False,
+            return_bias=False,
         )
-        self.linear_2 = nn.Linear(
+        self.act_fn = SwiGLU()
+        self.down_proj = RowParallelLinear(
             inner_dim,
             dim,
             bias=False,
-        )
-        self.linear_3 = nn.Linear(
-            dim,
-            inner_dim,
-            bias=False,
+            input_is_parallel=True,
+            return_bias=False,
         )
 
     def forward(self, x):
-        h1, h2 = self.linear_1(x), self.linear_3(x)
-        return self.linear_2(self.swiglu(h1, h2))
+        x = self.gate_up_proj(x)
+        x = self.act_fn(x)
+        return self.down_proj(x)
 
 
 class Lumina2CombinedTimestepCaptionEmbedding(nn.Module):
@@ -648,14 +649,11 @@ class OmniGen2TransformerBlock(nn.Module):
 
         Uses Xavier uniform initialization for linear layers and zero initialization for biases.
         """
-        nn.init.xavier_uniform_(self.attn.to_q.weight)
-        nn.init.xavier_uniform_(self.attn.to_k.weight)
-        nn.init.xavier_uniform_(self.attn.to_v.weight)
+        nn.init.xavier_uniform_(self.attn.to_qkv.weight)
         nn.init.xavier_uniform_(self.attn.to_out[0].weight)
 
-        nn.init.xavier_uniform_(self.feed_forward.linear_1.weight)
-        nn.init.xavier_uniform_(self.feed_forward.linear_2.weight)
-        nn.init.xavier_uniform_(self.feed_forward.linear_3.weight)
+        nn.init.xavier_uniform_(self.feed_forward.gate_up_proj.weight)
+        nn.init.xavier_uniform_(self.feed_forward.down_proj.weight)
 
         if self.modulation:
             nn.init.zeros_(self.norm1.linear.weight)
@@ -1182,6 +1180,9 @@ class OmniGen2Transformer2DModel(nn.Module):
             (".to_qkv", ".to_q", "q"),
             (".to_qkv", ".to_k", "k"),
             (".to_qkv", ".to_v", "v"),
+            # feed-forward
+            (".feed_forward.gate_up_proj", ".feed_forward.linear_1", 0),
+            (".feed_forward.gate_up_proj", ".feed_forward.linear_3", 1),
         ]
 
         params_dict = dict(self.named_parameters())
@@ -1197,6 +1198,9 @@ class OmniGen2Transformer2DModel(nn.Module):
                 weight_loader(param, loaded_weight, shard_id)
                 break
             else:
+                # feed_forward.linear_2 -> feed_forward.down_proj rename
+                if ".feed_forward.linear_2." in name:
+                    name = name.replace(".feed_forward.linear_2.", ".feed_forward.down_proj.")
                 param = params_dict[name]
                 weight_loader = getattr(param, "weight_loader", default_weight_loader)
                 weight_loader(param, loaded_weight)
