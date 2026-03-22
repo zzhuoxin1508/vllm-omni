@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from diffusers.models.activations import get_activation
 from diffusers.models.embeddings import Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from einops import rearrange, repeat
 from torch.nn import RMSNorm
+from vllm.model_executor.layers.activation import get_act_and_mul_fn
 from vllm.model_executor.layers.linear import (
     MergedColumnParallelLinear,
     QKVParallelLinear,
@@ -21,12 +21,6 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm_omni.diffusion.attention.layer import Attention
 
 logger = logging.getLogger(__name__)
-
-
-class SwiGLU(nn.Module):
-    def forward(self, x):
-        gate, up = x.chunk(2, dim=-1)
-        return F.silu(gate.float(), inplace=False).to(gate.dtype) * up
 
 
 class OmniGen2Attention(nn.Module):
@@ -163,14 +157,6 @@ class TimestepEmbedding(nn.Module):
             self.post_act = None
         else:
             self.post_act = get_activation(post_act_fn)
-
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        nn.init.normal_(self.linear_1.weight, std=0.02)
-        nn.init.zeros_(self.linear_1.bias)
-        nn.init.normal_(self.linear_2.weight, std=0.02)
-        nn.init.zeros_(self.linear_2.bias)
 
     def forward(self, sample, condition=None):
         if condition is not None:
@@ -352,7 +338,7 @@ class LuminaFeedForward(nn.Module):
             bias=False,
             return_bias=False,
         )
-        self.act_fn = SwiGLU()
+        self.act_fn = get_act_and_mul_fn("silu")
         self.down_proj = RowParallelLinear(
             inner_dim,
             dim,
@@ -393,12 +379,6 @@ class Lumina2CombinedTimestepCaptionEmbedding(nn.Module):
             RMSNorm(text_feat_dim, eps=norm_eps),
             nn.Linear(text_feat_dim, hidden_size, bias=True),
         )
-
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        nn.init.trunc_normal_(self.caption_embedder[1].weight, std=0.02)
-        nn.init.zeros_(self.caption_embedder[1].bias)
 
     def forward(
         self,
@@ -641,22 +621,6 @@ class OmniGen2TransformerBlock(nn.Module):
         self.norm2 = RMSNorm(dim, eps=norm_eps)
         self.ffn_norm2 = RMSNorm(dim, eps=norm_eps)
 
-    def initialize_weights(self) -> None:
-        """
-        Initialize the weights of the transformer block.
-
-        Uses Xavier uniform initialization for linear layers and zero initialization for biases.
-        """
-        nn.init.xavier_uniform_(self.attn.to_qkv.weight)
-        nn.init.xavier_uniform_(self.attn.to_out[0].weight)
-
-        nn.init.xavier_uniform_(self.feed_forward.gate_up_proj.weight)
-        nn.init.xavier_uniform_(self.feed_forward.down_proj.weight)
-
-        if self.modulation:
-            nn.init.zeros_(self.norm1.linear.weight)
-            nn.init.zeros_(self.norm1.linear.bias)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -868,27 +832,6 @@ class OmniGen2Transformer2DModel(nn.Module):
 
         # Add learnable embeddings to distinguish different images
         self.image_index_embedding = nn.Parameter(torch.randn(5, hidden_size))  # support max 5 ref images
-
-        self.initialize_weights()
-
-    def initialize_weights(self) -> None:
-        """
-        Initialize the weights of the model.
-
-        Uses Xavier uniform initialization for linear layers.
-        """
-        nn.init.xavier_uniform_(self.x_embedder.weight)
-        nn.init.constant_(self.x_embedder.bias, 0.0)
-
-        nn.init.xavier_uniform_(self.ref_image_patch_embedder.weight)
-        nn.init.constant_(self.ref_image_patch_embedder.bias, 0.0)
-
-        nn.init.zeros_(self.norm_out.linear_1.weight)
-        nn.init.zeros_(self.norm_out.linear_1.bias)
-        nn.init.zeros_(self.norm_out.linear_2.weight)
-        nn.init.zeros_(self.norm_out.linear_2.bias)
-
-        nn.init.normal_(self.image_index_embedding, std=0.02)
 
     def img_patch_embed_and_refine(
         self,
