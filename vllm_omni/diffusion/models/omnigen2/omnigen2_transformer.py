@@ -9,8 +9,8 @@ from diffusers.models.activations import get_activation
 from diffusers.models.embeddings import Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from einops import rearrange, repeat
-from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.activation import get_act_and_mul_fn
+from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     MergedColumnParallelLinear,
     QKVParallelLinear,
