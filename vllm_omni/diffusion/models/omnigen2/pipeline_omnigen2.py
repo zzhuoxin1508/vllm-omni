@@ -1174,7 +1174,7 @@ class OmniGen2Pipeline(nn.Module):
             num_tokens=latents.shape[-2] * latents.shape[-1],
         )
         self._num_timesteps = len(timesteps)
-        
+
         cfg_world_size = get_classifier_free_guidance_world_size()
         use_cfg_img = self.image_guidance_scale > 1.0
         cfg_parallel_ready = (
@@ -1222,7 +1222,7 @@ class OmniGen2Pipeline(nn.Module):
                         prompt_attention_mask=negative_prompt_attention_mask,
                         ref_image_hidden_states=ref_latents,
                     )
-    
+
                     model_pred_uncond = self.predict(
                         t=t,
                         latents=latents,
@@ -1263,7 +1263,7 @@ class OmniGen2Pipeline(nn.Module):
         image = self.vae.decode(latents, return_dict=False)[0]
 
         return image
-    
+
     def _processing_parallel(
         self,
         latents,
@@ -1306,7 +1306,7 @@ class OmniGen2Pipeline(nn.Module):
         else:
             branch_prompt_embeds = negative_prompt_embeds
             branch_attention_mask = negative_prompt_attention_mask
-            branch_ref_latents = ref_latents 
+            branch_ref_latents = ref_latents
 
         for i, t in enumerate(timesteps):
             in_cfg_range = self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1]
@@ -1352,7 +1352,7 @@ class OmniGen2Pipeline(nn.Module):
                 step_func(i, self._num_timesteps)
 
         return latents
-    
+
     def predict(
         self,
         t,
