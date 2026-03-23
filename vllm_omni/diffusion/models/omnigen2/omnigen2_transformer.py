@@ -279,7 +279,7 @@ class LuminaLayerNormContinuous(nn.Module):
         if norm_type == "layer_norm":
             self.norm = nn.LayerNorm(embedding_dim, eps, elementwise_affine, bias)
         elif norm_type == "rms_norm":
-            self.norm = RMSNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine)
+            self.norm = RMSNorm(embedding_dim, eps=eps)
         else:
             raise ValueError(f"unknown norm_type {norm_type}")
 
