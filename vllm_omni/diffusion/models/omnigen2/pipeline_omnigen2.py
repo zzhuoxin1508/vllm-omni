@@ -1279,22 +1279,17 @@ class OmniGen2Pipeline(nn.Module):
     ) -> torch.Tensor:
         """CFG parallel denoising loop: each rank computes one CFG branch, returns latents.
 
-        Rank 0: cond branch  (prompt_embeds,          ref_latents)
+        Rank 0: cond branch  (prompt_embeds, ref_latents)
         Rank 1: uncond branch (negative_prompt_embeds, None)
-        Rank 2: ref branch    (negative_prompt_embeds, ref_latents)  -- only when image_guidance > 1
+        Rank 2: ref branch    (negative_prompt_embeds, ref_latents)
         """
         cfg_group = get_cfg_group()
         cfg_rank = get_classifier_free_guidance_rank()
         use_cfg_img = self.image_guidance_scale > 1.0
 
-        # Sync initial latents across ranks (may differ when no per-request seed)
         latents = latents.contiguous()
         cfg_group.broadcast(latents, src=0)
 
-        # Select this rank's branch inputs:
-        #   rank 0: cond branch
-        #   rank 1: uncond branch
-        #   rank 2+: ref branch if image guidance enabled, else uncond branch
         if cfg_rank == 0:
             branch_prompt_embeds = prompt_embeds
             branch_attention_mask = prompt_attention_mask
@@ -1310,10 +1305,9 @@ class OmniGen2Pipeline(nn.Module):
 
         for i, t in enumerate(timesteps):
             in_cfg_range = self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1]
-            use_cfg_this_step = in_cfg_range and self.text_guidance_scale > 1.0
             use_cfg_img_this_step = in_cfg_range and use_cfg_img
 
-            if use_cfg_this_step:
+            if in_cfg_range:
                 local_pred = self.predict(
                     t=t,
                     latents=latents,
@@ -1322,9 +1316,10 @@ class OmniGen2Pipeline(nn.Module):
                     prompt_attention_mask=branch_attention_mask,
                     ref_image_hidden_states=branch_ref_latents,
                 )
+                local_pred = local_pred.contiguous()
                 gathered = cfg_group.all_gather(local_pred, separate_tensors=True)
                 model_pred, model_pred_uncond = gathered[0], gathered[1]
-                if use_cfg_img_this_step and len(gathered) > 2:
+                if use_cfg_img_this_step:
                     model_pred_ref = gathered[2]
                     model_pred = (
                         model_pred_uncond
