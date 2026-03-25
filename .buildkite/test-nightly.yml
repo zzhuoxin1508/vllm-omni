@@ -292,11 +292,57 @@ steps:
                   path: /mnt/hf-cache
                   type: DirectoryOrCreate
 
+  - label: ":full_moon: HunyuanImage Diffusion Perf Test with H100"
+    key: nightly-hunyuan-image-performance
+    timeout_in_minutes: 300
+    depends_on: upload-nightly-pipeline
+    if: build.env("NIGHTLY") == "1"
+    commands:
+      - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - export DIFFUSION_BENCHMARK_DIR=tests/dfx/perf/results
+      - pytest -s -v tests/dfx/perf/scripts/run_diffusion_benchmark.py --config-file tests/dfx/perf/tests/test_hunyuan_image_vllm_omni.json
+      - buildkite-agent artifact upload "tests/dfx/perf/results/benchmark_results_*.json"
+      - buildkite-agent artifact upload "tests/dfx/perf/results/logs/*.log"
+    agents:
+      queue: "mithril-h100-pool"
+    plugins:
+      - kubernetes:
+          podSpec:
+            containers:
+              - image: 936637512419.dkr.ecr.us-west-2.amazonaws.com/vllm-ci-pull-through-cache/q9t5s3a7/vllm-ci-test-repo:$BUILDKITE_COMMIT
+                resources:
+                  limits:
+                    nvidia.com/gpu: 4
+                volumeMounts:
+                  - name: devshm
+                    mountPath: /dev/shm
+                  - name: hf-cache
+                    mountPath: /root/.cache/huggingface
+                env:
+                  - name: HF_HOME
+                    value: /root/.cache/huggingface
+                  - name: HF_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-token-secret
+                        key: token
+            nodeSelector:
+              node.kubernetes.io/instance-type: gpu-h100-sxm
+            volumes:
+              - name: devshm
+                emptyDir:
+                  medium: Memory
+              - name: hf-cache
+                hostPath:
+                  path: /mnt/hf-cache
+                  type: DirectoryOrCreate
+
   - label: ":email: Nightly Collection & Email"
     key: nightly-perf-distribution
     depends_on:
       - nightly-omni-performance
       - nightly-qwen-image-performance
+      - nightly-hunyuan-image-performance
     if: build.env("NIGHTLY") == "1"
     commands:
       - pip install openpyxl
@@ -304,6 +350,7 @@ steps:
       - export DEFAULT_OUTPUT_DIR=tests/perf/results
       - buildkite-agent artifact download "tests/perf/results/*.json" . --step nightly-omni-performance
       - buildkite-agent artifact download "tests/perf/results/*.json" . --step nightly-qwen-image-performance
+      - buildkite-agent artifact download "tests/dfx/perf/results/benchmark_results_*.json" . --step nightly-hunyuan-image-performance
       - buildkite-agent artifact download "tests/perf/results/*.html" . --step nightly-omni-performance
       - python tools/nightly/generate_nightly_perf_excel.py
       - python tools/nightly/generate_nightly_perf_html.py
