@@ -19,6 +19,7 @@ from vllm.model_executor.layers.linear import (
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
 from vllm_omni.diffusion.attention.layer import Attention
+from vllm_omni.diffusion.cache.base import CachedTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -667,7 +668,7 @@ class OmniGen2TransformerBlock(nn.Module):
         return hidden_states
 
 
-class OmniGen2Transformer2DModel(nn.Module):
+class OmniGen2Transformer2DModel(CachedTransformer):
     """
     OmniGen2 Transformer 2D Model.
 

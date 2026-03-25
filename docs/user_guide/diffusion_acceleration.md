@@ -73,6 +73,7 @@ The following table shows which models are currently supported by each accelerat
 | **FLUX.2-dev** | `black-forest-labs/FLUX.2-dev` | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | **FLUX.1-Kontext-dev** | `black-forest-labs/FLUX.1-Kontext-dev` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | **GLM-Image** | `zai-org/GLM-Image` | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| **OmniGen2** | `OmniGen2/OmniGen2` | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 
 ### VideoGen
 
