@@ -35,6 +35,7 @@ from vllm.v1.engine.input_processor import InputProcessor
 from vllm.v1.engine.utils import get_engine_zmq_addresses, launch_core_engines
 
 from vllm_omni.diffusion.data import DiffusionParallelConfig
+from vllm_omni.diffusion.utils.hf_utils import is_diffusion_model
 from vllm_omni.distributed.omni_connectors.utils.initialization import (
     resolve_omni_kv_config_for_stage,
 )
@@ -898,6 +899,37 @@ class AsyncOmniEngine:
 
         stage_configs_path = kwargs.get("stage_configs_path", None)
         explicit_stage_configs = kwargs.pop("stage_configs", None)
+
+        if is_diffusion_model(model) and kwargs.get("parallel_config") is None:
+            ulysses_degree = kwargs.get("ulysses_degree") or 1
+            ring_degree = kwargs.get("ring_degree") or 1
+            ulysses_mode = kwargs.get("ulysses_mode") or "strict"
+            sequence_parallel_size = kwargs.get("sequence_parallel_size")
+            tensor_parallel_size = kwargs.get("tensor_parallel_size") or 1
+            enable_expert_parallel = kwargs.get("enable_expert_parallel", False)
+            cfg_parallel_size = kwargs.get("cfg_parallel_size") or 1
+            vae_patch_parallel_size = kwargs.get("vae_patch_parallel_size") or 1
+            use_hsdp = kwargs.get("use_hsdp", False)
+            hsdp_shard_size = kwargs.get("hsdp_shard_size", -1)
+            hsdp_replicate_size = kwargs.get("hsdp_replicate_size", 1)
+            if sequence_parallel_size is None:
+                sequence_parallel_size = ulysses_degree * ring_degree
+            kwargs["parallel_config"] = DiffusionParallelConfig(
+                pipeline_parallel_size=1,
+                data_parallel_size=1,
+                tensor_parallel_size=tensor_parallel_size,
+                enable_expert_parallel=enable_expert_parallel,
+                sequence_parallel_size=sequence_parallel_size,
+                ulysses_degree=ulysses_degree,
+                ring_degree=ring_degree,
+                ulysses_mode=ulysses_mode,
+                cfg_parallel_size=cfg_parallel_size,
+                vae_patch_parallel_size=vae_patch_parallel_size,
+                use_hsdp=use_hsdp,
+                hsdp_shard_size=hsdp_shard_size,
+                hsdp_replicate_size=hsdp_replicate_size,
+            )
+
         if explicit_stage_configs is not None:
             logger.warning(
                 "`stage_configs` is not part of the public API. "
