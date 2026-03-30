@@ -82,6 +82,7 @@ from vllm.tool_parsers.mistral_tool_parser import MistralToolCall
 from vllm.utils.collection_utils import as_list
 
 from vllm_omni.entrypoints.openai.audio_utils_mixin import AudioMixin
+from vllm_omni.entrypoints.openai.image_api_utils import validate_layered_layers
 from vllm_omni.entrypoints.openai.protocol import OmniChatCompletionStreamResponse
 from vllm_omni.entrypoints.openai.protocol.audio import AudioResponse, CreateAudio
 from vllm_omni.entrypoints.openai.utils import parse_lora_request
@@ -2021,7 +2022,6 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         return choices
 
     # ==================== Diffusion Mode Methods ====================
-
     async def _create_diffusion_chat_completion(
         self,
         request: ChatCompletionRequest,
@@ -2052,9 +2052,6 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
 
             # Extract prompt and images from messages
             prompt, reference_images = self._extract_diffusion_prompt_and_images(messages)
-
-            if not prompt:
-                return self._create_error_response("No text prompt found in messages")
 
             # Extract generation parameters from extra_body (preferred)
             # Reference: text_to_image.py and text_to_video.py for supported parameters
@@ -2097,6 +2094,11 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
             # Qwen-Image-Layered parameters
             layers = extra_body.get("layers")
             resolution = extra_body.get("resolution")
+
+            try:
+                layers = validate_layered_layers(layers)
+            except ValueError as e:
+                return self._create_error_response(str(e), status_code=400)
 
             logger.info(
                 "Diffusion chat request %s: prompt=%r, ref_images=%d, params=%s",
