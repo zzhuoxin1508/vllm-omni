@@ -118,6 +118,23 @@ class AsyncOmni(EngineClient, OmniBase):
         """Compatibility helper for call sites expecting async vllm config access."""
         return self.vllm_config
 
+    def get_diffusion_od_config(self) -> Any | None:
+        """Return the diffusion-stage config when the pipeline has one."""
+        for stage_client in self.engine.stage_clients:
+            if getattr(stage_client, "stage_type", None) != "diffusion":
+                continue
+
+            od_config = getattr(stage_client, "od_config", None)
+            if od_config is not None:
+                return od_config
+
+            inner_engine = getattr(stage_client, "_engine", None)
+            od_config = getattr(inner_engine, "od_config", None)
+            if od_config is not None:
+                return od_config
+
+        return None
+
     @property
     def model_config(self):
         """Return the model config for the comprehension stage when present."""
@@ -442,19 +459,30 @@ class AsyncOmni(EngineClient, OmniBase):
         async with self._pause_cond:
             return self._paused
 
-    async def start_profile(self, stages: list[int] | None = None) -> list[Any]:
+    async def start_profile(
+        self,
+        profile_prefix: str | None = None,
+        stages: list[int] | None = None,
+    ) -> list[Any]:
         """Start profiling specified stages.
 
-        TODO(AsyncOmni): normalize return payloads across LLM/diffusion stages.
+        Uses vLLM-compatible profile(is_start=True, profile_prefix) interface.
+
+        Args:
+            profile_prefix: Optional prefix for the trace file names.
+            stages: List of stage IDs to profile. If None, profiles all stages.
         """
-        return await self.collective_rpc(method="start_profile", stage_ids=stages)
+        return await self.collective_rpc(method="profile", args=(True, profile_prefix), stage_ids=stages)
 
     async def stop_profile(self, stages: list[int] | None = None) -> list[Any]:
         """Stop profiling specified stages.
 
-        TODO(AsyncOmni): normalize return payloads across LLM/diffusion stages.
+        Uses vLLM-compatible profile(is_start=False) interface.
+
+        Args:
+            stages: List of stage IDs to profile. If None, stops all stages.
         """
-        return await self.collective_rpc(method="stop_profile", stage_ids=stages)
+        return await self.collective_rpc(method="profile", args=(False, None), stage_ids=stages)
 
     async def reset_mm_cache(self) -> None:
         """Reset the multi-modal cache for all stages.
