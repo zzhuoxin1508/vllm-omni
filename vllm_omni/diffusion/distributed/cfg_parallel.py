@@ -305,6 +305,14 @@ class CFGParallelMixin(metaclass=ABCMeta):
                 pred = _slice_pred(pred, output_slice)
             my_preds.append(pred)
 
+        # Idle ranks (cfg_world_size > n_branches) need a reference shape.
+        # Run branch 0 to get it, result will be discarded.
+        if not my_preds:
+            pred = _wrap(self.predict_noise(**branches_kwargs[0]))
+            if output_slice is not None:
+                pred = _slice_pred(pred, output_slice)
+            my_preds.append(pred)
+
         # Pad to max_per_rank with zeros so all ranks have same size
         ref_pred = my_preds[0]
         while len(my_preds) < max_per_rank:

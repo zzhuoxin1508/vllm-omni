@@ -29,6 +29,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
 from vllm.model_executor.models.utils import AutoWeightsLoader
 
 from vllm_omni.diffusion.data import DiffusionOutput, OmniDiffusionConfig
+from vllm_omni.diffusion.distributed.cfg_parallel import CFGParallelMixin
 from vllm_omni.diffusion.distributed.utils import get_local_device
 from vllm_omni.diffusion.model_loader.diffusers_loader import DiffusersPipelineLoader
 from vllm_omni.diffusion.models.omnigen2.omnigen2_transformer import (
@@ -619,7 +620,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class OmniGen2Pipeline(nn.Module):
+class OmniGen2Pipeline(CFGParallelMixin, nn.Module):
     """
     Pipeline for text-to-image generation using OmniGen2.
 
@@ -1171,14 +1172,6 @@ class OmniGen2Pipeline(nn.Module):
         self._num_timesteps = len(timesteps)
 
         for i, t in enumerate(timesteps):
-            model_pred = self.predict(
-                t=t,
-                latents=latents,
-                prompt_embeds=prompt_embeds,
-                freqs_cis=freqs_cis,
-                prompt_attention_mask=prompt_attention_mask,
-                ref_image_hidden_states=ref_latents,
-            )
             text_guidance_scale = (
                 self.text_guidance_scale if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1] else 1.0
             )
@@ -1186,40 +1179,50 @@ class OmniGen2Pipeline(nn.Module):
                 self.image_guidance_scale if self.cfg_range[0] <= i / len(timesteps) <= self.cfg_range[1] else 1.0
             )
 
+            positive_kwargs = dict(
+                t=t, 
+                latents=latents, 
+                prompt_embeds=prompt_embeds,
+                freqs_cis=freqs_cis, 
+                prompt_attention_mask=prompt_attention_mask,
+                ref_image_hidden_states=ref_latents,
+            )
+            uncond_kwargs = dict(
+                t=t, 
+                latents=latents, 
+                prompt_embeds=negative_prompt_embeds,
+                freqs_cis=freqs_cis, 
+                prompt_attention_mask=negative_prompt_attention_mask,
+                ref_image_hidden_states=None,
+            )
+
             if text_guidance_scale > 1.0 and image_guidance_scale > 1.0:
-                model_pred_ref = self.predict(
-                    t=t,
-                    latents=latents,
+                # 3-branch CFG: pos + ref_neg + uncond
+                self._text_guidance_scale = text_guidance_scale
+                self._image_guidance_scale = image_guidance_scale
+                ref_neg_kwargs = dict(
+                    t=t, 
+                    latents=latents, 
                     prompt_embeds=negative_prompt_embeds,
-                    freqs_cis=freqs_cis,
+                    freqs_cis=freqs_cis, 
                     prompt_attention_mask=negative_prompt_attention_mask,
                     ref_image_hidden_states=ref_latents,
                 )
-
-                model_pred_uncond = self.predict(
-                    t=t,
-                    latents=latents,
-                    prompt_embeds=negative_prompt_embeds,
-                    freqs_cis=freqs_cis,
-                    prompt_attention_mask=negative_prompt_attention_mask,
-                    ref_image_hidden_states=None,
-                )
-
-                model_pred = (
-                    model_pred_uncond
-                    + image_guidance_scale * (model_pred_ref - model_pred_uncond)
-                    + text_guidance_scale * (model_pred - model_pred_ref)
+                model_pred = self.predict_noise_with_multi_branch_cfg(
+                    do_true_cfg=True,
+                    branches_kwargs=[positive_kwargs, ref_neg_kwargs, uncond_kwargs],
+                    true_cfg_scale=text_guidance_scale,
                 )
             elif text_guidance_scale > 1.0:
-                model_pred_uncond = self.predict(
-                    t=t,
-                    latents=latents,
-                    prompt_embeds=negative_prompt_embeds,
-                    freqs_cis=freqs_cis,
-                    prompt_attention_mask=negative_prompt_attention_mask,
-                    ref_image_hidden_states=None,
+                # 2-branch CFG: pos + uncond
+                model_pred = self.predict_noise_with_multi_branch_cfg(
+                    do_true_cfg=True,
+                    branches_kwargs=[positive_kwargs, uncond_kwargs],
+                    true_cfg_scale=text_guidance_scale,
                 )
-                model_pred = model_pred_uncond + text_guidance_scale * (model_pred - model_pred_uncond)
+            else:
+                # No CFG
+                model_pred = self.predict_noise(**positive_kwargs)
 
             latents = self.scheduler.step(model_pred, t, latents, return_dict=False)[0]
 
@@ -1264,6 +1267,23 @@ class OmniGen2Pipeline(nn.Module):
             **optional_kwargs,
         )
         return model_pred
+
+    def predict_noise(self, **kwargs):
+        """Override CFGParallelMixin.predict_noise to use self.predict."""
+        return self.predict(**kwargs)
+
+    def combine_multi_branch_cfg_noise(self, predictions, true_cfg_scale, cfg_normalize=False):
+        """Override: 3-branch dual scale or 2-branch standard CFG."""
+        if len(predictions) == 3:
+            pos, ref, uncond = predictions[0], predictions[1], predictions[2]
+            return (
+                uncond
+                + self._image_guidance_scale * (ref - uncond)
+                + self._text_guidance_scale * (pos - ref)
+            )
+        # 2-branch: standard CFG
+        pos, neg = predictions[0], predictions[1]
+        return neg + true_cfg_scale * (pos - neg)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(self)
