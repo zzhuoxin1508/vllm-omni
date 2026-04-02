@@ -5,6 +5,7 @@
 Base pipeline class for Diffusion models with shared CFG functionality.
 """
 
+import logging
 from abc import ABCMeta
 from typing import Any
 
@@ -281,8 +282,6 @@ class CFGParallelMixin(metaclass=ABCMeta):
         cfg_rank = get_classifier_free_guidance_rank()
 
         if cfg_world_size > n_branches:
-            import logging
-
             logger = logging.getLogger(__name__)
             logger.warning(
                 "cfg_parallel_size=%d > n_branches=%d, %d GPU(s) will be idle for CFG",
@@ -294,7 +293,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
         # Assign branches to ranks via round-robin
         assignments = _dispatch_branches(n_branches, cfg_world_size)
         my_branch_ids = assignments[cfg_rank]
-        max_per_rank = 1 if n_branches <= cfg_world_size else 2
+        max_per_rank = max(len(a) for a in assignments)
 
         # Run assigned branches
         my_preds: list[tuple[torch.Tensor, ...]] = []
