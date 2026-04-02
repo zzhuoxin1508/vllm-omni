@@ -448,27 +448,29 @@ class MultiBranchTestPipeline(CFGParallelMixin):
         for param in self.transformer.parameters():
             torch.nn.init.normal_(param, mean=0.0, std=0.02)
 
-        self._text_guidance_scale = 5.0
-        self._image_guidance_scale = 2.0
-
     def combine_multi_branch_cfg_noise(self, predictions, true_cfg_scale, cfg_normalize=False):
         """N-branch combine with weighted sum for testing.
 
-        - 2-branch: standard CFG formula
-        - 3-branch: OmniGen2-style dual guidance scale
-        - 4-branch: DreamID-style weighted sum of all branches
+        - 2-branch: standard CFG formula (true_cfg_scale is float)
+        - 3-branch: OmniGen2-style dual guidance scale (true_cfg_scale is dict)
+        - 4-branch: DreamID-style weighted sum (true_cfg_scale is dict)
         """
         if len(predictions) == 4:
+            text_scale = true_cfg_scale["text"]
+            image_scale = true_cfg_scale["image"]
+            vid_ref_scale = true_cfg_scale["vid_ref"]
             pos, neg, vid_neg, audio_neg = predictions
             combined = (
                 audio_neg
-                + 1.5 * (vid_neg - audio_neg)
-                + self._image_guidance_scale * (neg - vid_neg)
-                + self._text_guidance_scale * (pos - neg)
+                + vid_ref_scale * (vid_neg - audio_neg)
+                + image_scale * (neg - vid_neg)
+                + text_scale * (pos - neg)
             )
         elif len(predictions) == 3:
+            text_scale = true_cfg_scale["text"]
+            image_scale = true_cfg_scale["image"]
             pos, ref, uncond = predictions
-            combined = uncond + self._image_guidance_scale * (ref - uncond) + self._text_guidance_scale * (pos - ref)
+            combined = uncond + image_scale * (ref - uncond) + text_scale * (pos - ref)
         else:
             pos, neg = predictions[0], predictions[1]
             combined = neg + true_cfg_scale * (pos - neg)
@@ -641,13 +643,20 @@ def test_predict_noise_with_multi_branch_cfg(
     if available_gpus < cfg_parallel_size:
         pytest.skip(f"Test requires {cfg_parallel_size} GPUs but only {available_gpus} available")
 
+    if n_branches == 2:
+        cfg_scale = 5.0
+    elif n_branches == 3:
+        cfg_scale = {"text": 5.0, "image": 2.0}
+    else:
+        cfg_scale = {"text": 5.0, "image": 2.0, "vid_ref": 1.5}
+
     test_config = {
         "batch_size": batch_size,
         "channels": 4,
         "height": 16,
         "width": 16,
         "hidden_dim": 128,
-        "cfg_scale": 5.0,
+        "cfg_scale": cfg_scale,
         "cfg_normalize": cfg_normalize,
         "model_seed": 42,
         "input_seed": 123,

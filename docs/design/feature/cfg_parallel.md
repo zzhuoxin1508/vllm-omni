@@ -201,12 +201,10 @@ For models with 3 or more CFG branches, use `predict_noise_with_multi_branch_cfg
 ```python
 class YourMultiBranchPipeline(nn.Module, CFGParallelMixin):
     def combine_multi_branch_cfg_noise(self, predictions, true_cfg_scale, cfg_normalize=False):
+        text_scale = true_cfg_scale["text"]
+        image_scale = true_cfg_scale["image"]
         pos, ref, uncond = predictions
-        return (
-            uncond
-            + self.image_guidance_scale * (ref - uncond)
-            + self.text_guidance_scale * (pos - ref)
-        )
+        return uncond + image_scale * (ref - uncond) + text_scale * (pos - ref)
 
     def diffuse(self, ...):
         for i, t in enumerate(timesteps):
@@ -216,7 +214,7 @@ class YourMultiBranchPipeline(nn.Module, CFGParallelMixin):
 
             noise_pred = self.predict_noise_with_multi_branch_cfg(
                 do_true_cfg=do_true_cfg,
-                true_cfg_scale=true_cfg_scale,
+                true_cfg_scale={"text": text_guidance_scale, "image": image_guidance_scale},
                 branches_kwargs=[positive_kwargs, ref_neg_kwargs, uncond_kwargs],
             )
             latents = self.scheduler_step_maybe_with_cfg(noise_pred, t, latents, do_true_cfg)

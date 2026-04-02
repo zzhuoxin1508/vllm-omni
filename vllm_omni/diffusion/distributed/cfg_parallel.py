@@ -5,17 +5,19 @@
 Base pipeline class for Diffusion models with shared CFG functionality.
 """
 
-import logging
 from abc import ABCMeta
 from typing import Any
 
 import torch
+from vllm.logger import init_logger
 
 from vllm_omni.diffusion.distributed.parallel_state import (
     get_cfg_group,
     get_classifier_free_guidance_rank,
     get_classifier_free_guidance_world_size,
 )
+
+logger = init_logger(__name__)
 
 
 def _wrap(pred: torch.Tensor | tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
@@ -213,7 +215,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
     def predict_noise_with_multi_branch_cfg(
         self,
         do_true_cfg: bool,
-        true_cfg_scale: float,
+        true_cfg_scale: float | dict[str, float],
         branches_kwargs: list[dict[str, Any]],
         cfg_normalize: bool = False,
         output_slice: int | None = None,
@@ -282,8 +284,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
         cfg_rank = get_classifier_free_guidance_rank()
 
         if cfg_world_size > n_branches:
-            logger = logging.getLogger(__name__)
-            logger.warning(
+            logger.warning_once(
                 "cfg_parallel_size=%d > n_branches=%d, %d GPU(s) will be idle for CFG",
                 cfg_world_size,
                 n_branches,
@@ -303,8 +304,8 @@ class CFGParallelMixin(metaclass=ABCMeta):
                 pred = _slice_pred(pred, output_slice)
             my_preds.append(pred)
 
-        # Idle ranks (cfg_world_size > n_branches) need a reference shape.
-        # Run branch 0 to get it, result will be discarded.
+        # Idle ranks (cfg_world_size > n_branches) run a forward pass to get the output shape for all_gather.
+        # Output shape cannot be inferred from kwargs — may be tuple, sliced, etc.
         if not my_preds:
             pred = _wrap(self.predict_noise(**branches_kwargs[0]))
             if output_slice is not None:
@@ -340,7 +341,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
     def combine_multi_branch_cfg_noise(
         self,
         predictions: list[torch.Tensor | tuple[torch.Tensor, ...]],
-        true_cfg_scale: float,
+        true_cfg_scale: float | dict[str, float],
         cfg_normalize: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, ...]:
         """
@@ -351,7 +352,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
         Args:
             predictions: List of N predictions, where predictions[0] is always
                 the positive/conditional branch.
-            true_cfg_scale: CFG scale factor.
+            true_cfg_scale: CFG scale factor (float for 2-branch, dict for multi-branch).
             cfg_normalize: Whether to normalize the combined prediction.
 
         Returns:

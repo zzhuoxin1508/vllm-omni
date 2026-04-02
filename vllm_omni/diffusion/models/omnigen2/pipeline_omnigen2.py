@@ -1198,8 +1198,6 @@ class OmniGen2Pipeline(CFGParallelMixin, nn.Module):
 
             if text_guidance_scale > 1.0 and image_guidance_scale > 1.0:
                 # 3-branch CFG: pos + ref_neg + uncond
-                self._text_guidance_scale = text_guidance_scale
-                self._image_guidance_scale = image_guidance_scale
                 ref_neg_kwargs = dict(
                     t=t,
                     latents=latents,
@@ -1210,7 +1208,10 @@ class OmniGen2Pipeline(CFGParallelMixin, nn.Module):
                 )
                 model_pred = self.predict_noise_with_multi_branch_cfg(
                     do_true_cfg=True,
-                    true_cfg_scale=text_guidance_scale,
+                    true_cfg_scale={
+                        "text": text_guidance_scale,
+                        "image": image_guidance_scale,
+                    },
                     branches_kwargs=[positive_kwargs, ref_neg_kwargs, uncond_kwargs],
                 )
             elif text_guidance_scale > 1.0:
@@ -1275,8 +1276,10 @@ class OmniGen2Pipeline(CFGParallelMixin, nn.Module):
     def combine_multi_branch_cfg_noise(self, predictions, true_cfg_scale, cfg_normalize=False):
         """Override: 3-branch dual scale or 2-branch standard CFG."""
         if len(predictions) == 3:
+            text_scale = true_cfg_scale["text"]
+            image_scale = true_cfg_scale["image"]
             pos, ref, uncond = predictions[0], predictions[1], predictions[2]
-            return uncond + self._image_guidance_scale * (ref - uncond) + self._text_guidance_scale * (pos - ref)
+            return uncond + image_scale * (ref - uncond) + text_scale * (pos - ref)
         # 2-branch: standard CFG
         pos, neg = predictions[0], predictions[1]
         return neg + true_cfg_scale * (pos - neg)
