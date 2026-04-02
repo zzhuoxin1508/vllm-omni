@@ -212,8 +212,8 @@ class CFGParallelMixin(metaclass=ABCMeta):
     def predict_noise_with_multi_branch_cfg(
         self,
         do_true_cfg: bool,
+        true_cfg_scale: float,
         branches_kwargs: list[dict[str, Any]],
-        true_cfg_scale: float = 1.0,
         cfg_normalize: bool = False,
         output_slice: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, ...]:
@@ -227,10 +227,10 @@ class CFGParallelMixin(metaclass=ABCMeta):
 
         Args:
             do_true_cfg: Whether to apply CFG.
+            true_cfg_scale: CFG scale factor (passed to combine_multi_branch_cfg_noise).
             branches_kwargs: List of N dicts, each containing kwargs for one
                 predict_noise() call. branches_kwargs[0] is always the
                 positive/conditional branch.
-            true_cfg_scale: CFG scale factor (passed to combine_multi_branch_cfg_noise).
             cfg_normalize: Whether to normalize (passed to combine_multi_branch_cfg_noise).
             output_slice: If set, slice each output to [:, :output_slice].
 
@@ -244,11 +244,11 @@ class CFGParallelMixin(metaclass=ABCMeta):
 
             if cfg_parallel_ready:
                 return self._predict_multi_branch_parallel(
-                    branches_kwargs, 
-                    n_branches, 
+                    branches_kwargs,
+                    n_branches,
                     cfg_world_size,
-                    true_cfg_scale, 
-                    cfg_normalize, 
+                    true_cfg_scale,
+                    cfg_normalize,
                     output_slice,
                 )
             else:
@@ -259,11 +259,7 @@ class CFGParallelMixin(metaclass=ABCMeta):
                     if output_slice is not None:
                         pred = _slice_pred(pred, output_slice)
                     preds.append(_unwrap(pred))
-                return self.combine_multi_branch_cfg_noise(
-                    preds, 
-                    true_cfg_scale,
-                    cfg_normalize
-                )
+                return self.combine_multi_branch_cfg_noise(preds, true_cfg_scale, cfg_normalize)
         else:
             # No CFG: only compute positive/conditional prediction
             pred = self.predict_noise(**branches_kwargs[0])
@@ -286,10 +282,13 @@ class CFGParallelMixin(metaclass=ABCMeta):
 
         if cfg_world_size > n_branches:
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(
                 "cfg_parallel_size=%d > n_branches=%d, %d GPU(s) will be idle for CFG",
-                cfg_world_size, n_branches, cfg_world_size - n_branches,
+                cfg_world_size,
+                n_branches,
+                cfg_world_size - n_branches,
             )
 
         # Assign branches to ranks via round-robin
@@ -334,17 +333,10 @@ class CFGParallelMixin(metaclass=ABCMeta):
         for bid in range(n_branches):
             owner_rank = bid % cfg_world_size
             slot_idx = bid // cfg_world_size
-            elements = tuple(
-                all_slots[slot_idx][elem_idx][owner_rank]
-                for elem_idx in range(len(ref_pred))
-            )
+            elements = tuple(all_slots[slot_idx][elem_idx][owner_rank] for elem_idx in range(len(ref_pred)))
             final_preds.append(_unwrap(elements))
 
-        return self.combine_multi_branch_cfg_noise(
-            final_preds,
-            true_cfg_scale, 
-            cfg_normalize
-        )
+        return self.combine_multi_branch_cfg_noise(final_preds, true_cfg_scale, cfg_normalize)
 
     def combine_multi_branch_cfg_noise(
         self,
