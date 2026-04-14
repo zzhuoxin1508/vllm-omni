@@ -1319,47 +1319,50 @@ class AsyncOmniEngine:
             default_stage_cfg_factory=lambda: self._create_default_diffusion_stage_cfg(kwargs),
         )
 
-        # Build parallel_config from CLI kwargs for diffusion models.
-        # Placed after load_and_resolve_stage_configs to reuse the resolved
-        # stage_type instead of making an extra network call via is_diffusion_model().
-        is_diffusion = any(getattr(cfg, "stage_type", None) == "diffusion" for cfg in stage_configs)
-        if is_diffusion and kwargs.get("parallel_config") is None:
-            ulysses_degree = kwargs.get("ulysses_degree", 1)
-            ring_degree = kwargs.get("ring_degree", 1)
-            ulysses_mode = kwargs.get("ulysses_mode", "strict")
-            sequence_parallel_size = kwargs.get("sequence_parallel_size")
-            tensor_parallel_size = kwargs.get("tensor_parallel_size", 1)
-            enable_expert_parallel = kwargs.get("enable_expert_parallel", False)
-            cfg_parallel_size = kwargs.get("cfg_parallel_size", 1)
-            vae_patch_parallel_size = kwargs.get("vae_patch_parallel_size", 1)
-            use_hsdp = kwargs.get("use_hsdp", False)
-            hsdp_shard_size = kwargs.get("hsdp_shard_size", -1)
-            hsdp_replicate_size = kwargs.get("hsdp_replicate_size", 1)
-            if sequence_parallel_size is None:
-                sequence_parallel_size = ulysses_degree * ring_degree
-            kwargs["parallel_config"] = DiffusionParallelConfig(
-                pipeline_parallel_size=1,
-                data_parallel_size=1,
-                tensor_parallel_size=tensor_parallel_size,
-                enable_expert_parallel=enable_expert_parallel,
-                sequence_parallel_size=sequence_parallel_size,
-                ulysses_degree=ulysses_degree,
-                ring_degree=ring_degree,
-                ulysses_mode=ulysses_mode,
-                cfg_parallel_size=cfg_parallel_size,
-                vae_patch_parallel_size=vae_patch_parallel_size,
-                use_hsdp=use_hsdp,
-                hsdp_shard_size=hsdp_shard_size,
-                hsdp_replicate_size=hsdp_replicate_size,
-            )
-
-        # Inject diffusion LoRA-related knobs from kwargs if not present in the stage config.
+        # Inject diffusion knobs (parallel_config, LoRA, quantization) from kwargs
+        # into resolved diffusion stages when not already set by YAML/model config.
         for cfg in stage_configs:
             try:
                 if getattr(cfg, "stage_type", None) != "diffusion":
                     continue
                 if not hasattr(cfg, "engine_args") or cfg.engine_args is None:
                     cfg.engine_args = OmegaConf.create({})
+
+                if kwargs.get("parallel_config") is None:
+                    parallel_cli_fields = {
+                        "ulysses_degree": 1,
+                        "ring_degree": 1,
+                        "ulysses_mode": "strict",
+                        "sequence_parallel_size": None,
+                        "tensor_parallel_size": 1,
+                        "enable_expert_parallel": False,
+                        "cfg_parallel_size": 1,
+                        "vae_patch_parallel_size": 1,
+                        "use_hsdp": False,
+                        "hsdp_shard_size": -1,
+                        "hsdp_replicate_size": 1,
+                    }
+                    if not hasattr(cfg.engine_args, "parallel_config") or cfg.engine_args.parallel_config is None:
+                        values = {k: kwargs.get(k, d) for k, d in parallel_cli_fields.items()}
+                        if values["sequence_parallel_size"] is None:
+                            values["sequence_parallel_size"] = values["ulysses_degree"] * values["ring_degree"]
+                        cfg.engine_args.parallel_config = DiffusionParallelConfig(
+                            pipeline_parallel_size=1,
+                            data_parallel_size=1,
+                            **values,
+                        )
+                    else:
+                        # YAML/model config already set parallel_config; only override
+                        # fields that the user explicitly passed via kwargs.
+                        pc = cfg.engine_args.parallel_config
+                        for key in parallel_cli_fields:
+                            if key in kwargs:
+                                setattr(pc, key, kwargs[key])
+                        if "sequence_parallel_size" not in kwargs and (
+                            "ulysses_degree" in kwargs or "ring_degree" in kwargs
+                        ):
+                            pc.sequence_parallel_size = pc.ulysses_degree * pc.ring_degree
+
                 if kwargs.get("lora_path") is not None:
                     if not hasattr(cfg.engine_args, "lora_path") or cfg.engine_args.lora_path is None:
                         cfg.engine_args.lora_path = kwargs["lora_path"]
@@ -1378,7 +1381,7 @@ class AsyncOmniEngine:
                     ):
                         cfg.engine_args.quantization_config = quantization_config
             except Exception as e:
-                logger.warning("Failed to inject LoRA config for stage: %s", e)
+                logger.warning("Failed to inject diffusion engine_args for stage: %s", e)
 
         return config_path, stage_configs
 
