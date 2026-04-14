@@ -618,8 +618,6 @@ def extract_omnigen2_context(
     # ============================================================================
     # PREPROCESSING (OmniGen2-specific)
     # ============================================================================
-    # PREPROCESSING (OmniGen2-specific)
-    # ============================================================================
     batch_size = len(hidden_states)
     is_hidden_states_tensor = isinstance(hidden_states, torch.Tensor)
 
@@ -744,14 +742,6 @@ def extract_omnigen2_context(
         temb=temb,
         run_transformer_blocks=run_transformer_blocks,
         postprocess=postprocess,
-        extra_states={
-            "attention_mask": attention_mask,
-            "rotary_emb": rotary_emb,
-            "seq_lengths": seq_lengths,
-            "l_effective_img_len": l_effective_img_len,
-            "img_sizes": img_sizes,
-            "is_hidden_states_tensor": is_hidden_states_tensor,
-        },
     )
 
 
