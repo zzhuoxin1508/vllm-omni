@@ -33,9 +33,10 @@ Usage:
 """
 
 import argparse
-import os
+import json
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import PIL.Image
@@ -46,6 +47,16 @@ from vllm_omni.entrypoints.omni import Omni
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 from vllm_omni.outputs import OmniRequestOutput
 from vllm_omni.platforms import current_omni_platform
+
+
+def parse_profiler_config(value: str) -> dict[str, Any]:
+    try:
+        config = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"--profiler-config must be valid JSON: {e}") from e
+    if not isinstance(config, dict):
+        raise argparse.ArgumentTypeError("--profiler-config must be a JSON object")
+    return config
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +101,24 @@ def parse_args() -> argparse.Namespace:
         default="unipc",
         choices=["unipc", "euler"],
         help="Sampling solver for Wan2.2 pipelines. Use 'euler' for Lightning/Distill setups.",
+    )
+    parser.add_argument(
+        "--kv-cache-dtype",
+        type=str,
+        default=None,
+        help="Config-level KV cache dtype (e.g. float8_e4m3fn).",
+    )
+    parser.add_argument(
+        "--kv-cache-skip-steps",
+        type=str,
+        default=None,
+        help="Config-level KV-cache quantization skip-step selector, e.g. '0-9,20,25-30'.",
+    )
+    parser.add_argument(
+        "--kv-cache-skip-layers",
+        type=str,
+        default=None,
+        help="Config-level KV-cache quantization skip-layer selector, e.g. '0,1,4-8'.",
     )
     parser.add_argument("--output", type=str, default="i2v_output.mp4", help="Path to save the video (mp4).")
     parser.add_argument("--fps", type=int, default=None, help="Frames per second for the output video.")
@@ -194,6 +223,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable diffusion pipeline profiler to display stage durations.",
     )
+    parser.add_argument(
+        "--profiler-config",
+        type=parse_profiler_config,
+        default=None,
+        help='JSON profiler config for torch/cuda profiling, e.g. \'{"profiler":"torch","torch_profiler_dir":"./perf"}\'.',
+    )
     return parser.parse_args()
 
 
@@ -274,8 +309,7 @@ def main():
             "rel_l1_thresh": 0.2,
         }
 
-    # Check if profiling is requested via environment variable
-    profiler_enabled = bool(os.getenv("VLLM_TORCH_PROFILER_DIR"))
+    profiler_enabled = args.profiler_config is not None
     parallel_config = DiffusionParallelConfig(
         ulysses_degree=args.ulysses_degree,
         ring_degree=args.ring_degree,
@@ -293,6 +327,9 @@ def main():
         vae_use_tiling=args.vae_use_tiling,
         boundary_ratio=args.boundary_ratio,
         flow_shift=args.flow_shift,
+        kv_cache_dtype=args.kv_cache_dtype,
+        kv_cache_skip_steps=args.kv_cache_skip_steps,
+        kv_cache_skip_layers=args.kv_cache_skip_layers,
         enable_cpu_offload=args.enable_cpu_offload,
         parallel_config=parallel_config,
         enforce_eager=args.enforce_eager,
@@ -300,6 +337,7 @@ def main():
         cache_backend=args.cache_backend,
         cache_config=cache_config,
         enable_diffusion_pipeline_profiler=args.enable_diffusion_pipeline_profiler,
+        profiler_config=args.profiler_config,
     )
 
     if profiler_enabled:
@@ -313,6 +351,9 @@ def main():
     print(f"  Inference steps: {args.num_inference_steps}")
     print(f"  Frames: {args.num_frames}")
     print(f"  Solver: {args.sample_solver}")
+    print(f"  kv_cache_dtype(config): {args.kv_cache_dtype}")
+    print(f"  kv_cache_skip_steps(config): {args.kv_cache_skip_steps}")
+    print(f"  kv_cache_skip_layers(config): {args.kv_cache_skip_layers}")
     print(
         f"  Parallel configuration: cfg_parallel_size={args.cfg_parallel_size},"
         f" tensor_parallel_size={args.tensor_parallel_size}, vae_patch_parallel_size={args.vae_patch_parallel_size}"
