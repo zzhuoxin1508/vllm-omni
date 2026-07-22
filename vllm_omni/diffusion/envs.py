@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     CUDA_HOME: str | None = None
     LOCAL_RANK: int = 0
     VLLM_OMNI_FUSED_QK_NORM_ROPE_MIN_TOKENS: str | None = None
+    VLLM_OMNI_CP_DEGREE: int = 1
 
 environment_variables: dict[str, Callable[[], Any]] = {
     # ================== Runtime Env Vars ==================
@@ -34,6 +35,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # "0" = always fuse; unset = each consumer's own measured default. Raw
     # string or None; validated by fused_qk_norm_rope_min_tokens().
     "VLLM_OMNI_FUSED_QK_NORM_ROPE_MIN_TOKENS": lambda: os.environ.get("VLLM_OMNI_FUSED_QK_NORM_ROPE_MIN_TOKENS", None),
+    # Default degree for KV-gather context parallelism. Explicit CLI/YAML
+    # configuration is passed to DiffusionParallelConfig and therefore wins.
+    "VLLM_OMNI_CP_DEGREE": lambda: int(os.environ.get("VLLM_OMNI_CP_DEGREE", "1")),
 }
 
 

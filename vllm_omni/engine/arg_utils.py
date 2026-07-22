@@ -571,6 +571,7 @@ class OrchestratorArgs:
     ulysses_a2a_permute: bool | None = None
     ring_degree: int | None = None
     allgather_degree: int | None = None
+    context_parallel_degree: int | None = None
     diffusion_quantization_config: str | None = None
     use_hsdp: bool = False
     hsdp_shard_size: int = -1

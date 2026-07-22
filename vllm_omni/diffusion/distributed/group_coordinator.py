@@ -1036,6 +1036,7 @@ class SequenceParallelGroupCoordinator(GroupCoordinator):
         self.ulysses_group = ulysses_group
         self.ring_group = ring_group
         self.allgather_group = allgather_group
+        self.context_parallel_degree = int(kwargs.get("context_parallel_degree", 1))
 
         self.ulysses_world_size = torch.distributed.get_world_size(self.ulysses_group)
         self.ulysses_rank = torch.distributed.get_rank(self.ulysses_group)
@@ -1043,6 +1044,8 @@ class SequenceParallelGroupCoordinator(GroupCoordinator):
         self.ring_rank = torch.distributed.get_rank(self.ring_group)
         self.allgather_world_size = torch.distributed.get_world_size(self.allgather_group)
         self.allgather_rank = torch.distributed.get_rank(self.allgather_group)
+        self.context_parallel_world_size = self.world_size if self.context_parallel_degree > 1 else 1
+        self.context_parallel_rank = self.rank_in_group if self.context_parallel_degree > 1 else 0
 
     def destroy(self):
         groups = [self.ulysses_group, self.ring_group, self.allgather_group]

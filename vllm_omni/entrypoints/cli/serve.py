@@ -694,6 +694,16 @@ class OmniServeCommand(CLISubcommand):
             "Equivalent to setting DiffusionParallelConfig.allgather_degree.",
         )
         omni_config_group.add_argument(
+            "--cp",
+            "--context-parallel-degree",
+            dest="context_parallel_degree",
+            type=int,
+            default=None,
+            help="KV-gather Context Parallelism degree for diffusion models. "
+            "Q remains sequence-local while K/V are all-gathered. "
+            "Equivalent to setting DiffusionParallelConfig.context_parallel_degree.",
+        )
+        omni_config_group.add_argument(
             "--diffusion-quantization-config",
             type=json.loads,
             default=None,

@@ -492,6 +492,29 @@ def test_serve_cli_forwards_model_defined_task_type_to_diffusion_stage():
     assert stage_cfg["engine_args"]["task_type"] == "fl2va"
 
 
+def test_serve_cli_accepts_context_parallel_degree():
+    parser = TrackingArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    OmniServeCommand().subparser_init(subparsers)
+
+    args = parser.parse_args(
+        [
+            "serve",
+            "ByteDance-Seed/BAGEL-7B-MoT",
+            "--omni",
+            "--cp",
+            "4",
+        ]
+    )
+
+    explicit_kwargs = args.get_explicit_kwargs_dict()
+    stage_cfg = AsyncOmniEngine._create_default_diffusion_stage_cfg(explicit_kwargs)[0]
+    parallel_config = stage_cfg["engine_args"]["parallel_config"]
+
+    assert parallel_config.context_parallel_degree == 4
+    assert parallel_config.sequence_parallel_size == 4
+
+
 def test_serve_cli_accepts_diffusion_pipeline_profiler_flag():
     """Ensure diffusion serve CLI exposes the profiler switch."""
     parser = TrackingArgumentParser()

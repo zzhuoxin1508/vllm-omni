@@ -11,6 +11,7 @@ later PRs cut consumers over to these classes.
 from __future__ import annotations
 
 import copy
+import os
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field, fields
 from functools import wraps
@@ -255,6 +256,7 @@ class _ParallelConfigEngineOverrides(TypedDict, total=False):
     ulysses_degree: int
     ring_degree: int
     allgather_degree: int
+    context_parallel_degree: int
     ulysses_mode: str
     ulysses_a2a_permute: bool
     cfg_parallel_size: int
@@ -713,6 +715,10 @@ class OmniStageDiffusionParallelConfig(OmniStageParallelConfig):
     ulysses_degree: int = Field(default=1, ge=1)
     ring_degree: int = Field(default=1, ge=1)
     allgather_degree: int = Field(default=1, ge=1)
+    context_parallel_degree: int = Field(
+        default_factory=lambda: int(os.environ.get("VLLM_OMNI_CP_DEGREE", "1")),
+        ge=1,
+    )
     ulysses_mode: str = "strict"
     ulysses_a2a_permute: bool = False
     cfg_parallel_size: int = Field(default=1, ge=1)
@@ -726,11 +732,16 @@ class OmniStageDiffusionParallelConfig(OmniStageParallelConfig):
 
     def __post_init__(self) -> None:
         self.data_parallel_index = self.data_parallel_rank
-        self.sequence_parallel_size = (
-            self.allgather_degree if self.allgather_degree > 1 else self.ulysses_degree * self.ring_degree
-        )
+        if self.allgather_degree > 1:
+            self.sequence_parallel_size = self.allgather_degree
+        else:
+            self.sequence_parallel_size = self.ulysses_degree * self.ring_degree * self.context_parallel_degree
         if self.allgather_degree > 1 and (self.ulysses_degree > 1 or self.ring_degree > 1):
             raise ValueError("allgather_degree > 1 is mutually exclusive with ulysses_degree/ring_degree > 1")
+        if self.context_parallel_degree > 1 and (self.ulysses_degree > 1 or self.ring_degree > 1):
+            raise ValueError("context_parallel_degree > 1 is mutually exclusive with Ulysses and Ring")
+        if self.allgather_degree > 1 and self.context_parallel_degree > 1:
+            raise ValueError("allgather_degree > 1 is mutually exclusive with context_parallel_degree > 1")
         if self.ulysses_mode not in {"strict", "advanced_uaa"}:
             raise ValueError("ulysses_mode must be 'strict' or 'advanced_uaa'")
         if self.vae_parallel_mode not in {"tile", "spatial_shard_height", "spatial_shard_width"}:

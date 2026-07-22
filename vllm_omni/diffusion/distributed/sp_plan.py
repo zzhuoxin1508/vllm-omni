@@ -9,6 +9,9 @@ This module provides:
 2. SequenceParallelInput/Output: Type definitions for _sp_plan declarations
 3. Validation utilities for _sp_plan
 
+KV-gather context parallelism extends SequenceParallelConfig with
+context_parallel_degree while preserving the existing Ulysses/Ring interface.
+
 A _sp_plan is a dictionary that specifies how to shard/gather tensors at
 different points in a model's forward pass. This allows automatic handling
 of sequence parallelism without modifying the model's forward() method.
@@ -67,17 +70,21 @@ class SequenceParallelConfig:
         ring_degree: Number of devices for Ring attention. Sequence is split
             across devices, with K/V passed in a ring topology. Best for long
             sequences with limited memory/bandwidth.
+        context_parallel_degree: Number of devices for KV-gather context
+            parallelism. Q stays sequence-sharded while K/V are all-gathered.
+            The first implementation is mutually exclusive with Ulysses/Ring.
         convert_to_fp32: Whether to convert output and LSE to float32 for
             numerical stability in ring attention.
 
     Note:
-        ulysses_degree * ring_degree = sequence_parallel_size
+        ulysses_degree * ring_degree * context_parallel_degree = sequence_parallel_size
         vLLM-Omni supports hybrid Ulysses-Ring attention (both > 1).
     """
 
     ulysses_degree: int = 1
     ring_degree: int = 1
     allgather_degree: int = 1
+    context_parallel_degree: int = 1
     convert_to_fp32: bool = True
 
     # Internal state - populated by setup()
@@ -86,18 +93,29 @@ class SequenceParallelConfig:
     _device: torch.device | None = None
 
     def __post_init__(self) -> None:
-        if self.ulysses_degree < 1 or self.ring_degree < 1 or self.allgather_degree < 1:
+        if (
+            self.ulysses_degree < 1
+            or self.ring_degree < 1
+            or self.allgather_degree < 1
+            or self.context_parallel_degree < 1
+        ):
             raise ValueError("SP degrees must be >= 1.")
 
         if self.allgather_degree > 1 and (self.ulysses_degree > 1 or self.ring_degree > 1):
             raise ValueError("AllGather-KV is mutually exclusive with Ulysses and Ring.")
-        if self.ulysses_degree == self.ring_degree == self.allgather_degree == 1:
-            raise ValueError("At least one SP degree must be > 1.")
+        if self.context_parallel_degree > 1 and (self.ulysses_degree > 1 or self.ring_degree > 1):
+            raise ValueError("KV-gather context parallelism is mutually exclusive with Ulysses and Ring.")
+        if self.allgather_degree > 1 and self.context_parallel_degree > 1:
+            raise ValueError("AllGather-KV is mutually exclusive with context parallelism.")
+        if self.ulysses_degree == self.ring_degree == self.allgather_degree == self.context_parallel_degree == 1:
+            raise ValueError("At least one SP degree must be > 1 to use sequence parallelism.")
 
     @property
     def sequence_parallel_size(self) -> int:
         """Total sequence parallel world size."""
-        return self.allgather_degree if self.allgather_degree > 1 else self.ulysses_degree * self.ring_degree
+        if self.allgather_degree > 1:
+            return self.allgather_degree
+        return self.ulysses_degree * self.ring_degree * self.context_parallel_degree
 
     def get_world_size(self) -> int:
         """Get the sequence parallel world size from parallel state.
@@ -164,6 +182,16 @@ class SequenceParallelConfig:
         from vllm_omni.diffusion.distributed.parallel_state import get_ring_parallel_rank
 
         return get_ring_parallel_rank()
+
+    def get_context_parallel_world_size(self) -> int:
+        from vllm_omni.diffusion.distributed.parallel_state import get_context_parallel_world_size
+
+        return get_context_parallel_world_size()
+
+    def get_context_parallel_rank(self) -> int:
+        from vllm_omni.diffusion.distributed.parallel_state import get_context_parallel_rank
+
+        return get_context_parallel_rank()
 
     def setup(self, rank: int, world_size: int, device: torch.device) -> None:
         """Initialize the config with runtime parallel state.

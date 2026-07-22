@@ -145,7 +145,7 @@ def _apply_diffusion_parallel_runtime_overrides(
             continue
         if parallel_config_dict is None:
             parallel_config_dict = {}
-        if key in ("ulysses_degree", "ring_degree", "allgather_degree"):
+        if key in ("ulysses_degree", "ring_degree", "allgather_degree", "context_parallel_degree"):
             degree_overridden = True
         parallel_config_dict[key] = runtime_overrides.pop(key)
 
@@ -153,9 +153,15 @@ def _apply_diffusion_parallel_runtime_overrides(
         ulysses_degree = parallel_config_dict.get("ulysses_degree") or 1
         ring_degree = parallel_config_dict.get("ring_degree") or 1
         allgather_degree = parallel_config_dict.get("allgather_degree") or 1
-        parallel_config_dict["sequence_parallel_size"] = (
-            allgather_degree if allgather_degree > 1 else ulysses_degree * ring_degree
-        )
+        context_parallel_degree = parallel_config_dict.get("context_parallel_degree")
+        if context_parallel_degree is None:
+            from vllm_omni.diffusion import envs
+
+            context_parallel_degree = envs.VLLM_OMNI_CP_DEGREE
+        if allgather_degree > 1:
+            parallel_config_dict["sequence_parallel_size"] = allgather_degree
+        else:
+            parallel_config_dict["sequence_parallel_size"] = ulysses_degree * ring_degree * context_parallel_degree
 
     if parallel_config_dict is not None:
         engine_args["parallel_config"] = parallel_config_dict
@@ -437,6 +443,7 @@ class StageDeployConfig:
     ulysses_a2a_permute: bool | None = None
     ring_degree: int | None = None
     allgather_degree: int | None = None
+    context_parallel_degree: int | None = None
     sequence_parallel_size: int | None = None
     cfg_parallel_size: int | None = None
     vae_patch_parallel_size: int | None = None

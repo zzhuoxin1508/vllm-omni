@@ -12,6 +12,7 @@ from vllm_omni.diffusion.attention.parallel.base import (
     NoParallelAttention,
     ParallelAttentionStrategy,
 )
+from vllm_omni.diffusion.attention.parallel.context_parallel import ContextParallelAttention
 from vllm_omni.diffusion.attention.parallel.ring import RingParallelAttention
 from vllm_omni.diffusion.attention.parallel.ulysses import UlyssesParallelAttention
 from vllm_omni.diffusion.distributed.parallel_state import (
@@ -46,8 +47,9 @@ def build_parallel_attention_strategy(
     ring_degree = getattr(p, "ring_degree", 1)
     allgather_degree = getattr(p, "allgather_degree", 1)
     ulysses_a2a_permute = getattr(p, "ulysses_a2a_permute", False)
+    context_parallel_degree = getattr(p, "context_parallel_degree", 1)
 
-    sp_configured = ulysses_degree > 1 or ring_degree > 1 or allgather_degree > 1
+    sp_configured = ulysses_degree > 1 or ring_degree > 1 or allgather_degree > 1 or context_parallel_degree > 1
     if not sp_configured:
         return NoParallelAttention()
 
@@ -56,12 +58,14 @@ def build_parallel_attention_strategy(
     except Exception as e:
         raise RuntimeError(
             f"SP is configured (ulysses={ulysses_degree}, ring={ring_degree}, "
-            f"allgather={allgather_degree}), but the SP group is unavailable."
+            f"allgather={allgather_degree}, context_parallel={context_parallel_degree}), "
+            f"but the SP group is unavailable."
         ) from e
     if get_sequence_parallel_world_size() <= 1:
         raise RuntimeError(
             f"SP is configured (ulysses={ulysses_degree}, ring={ring_degree}, "
-            f"allgather={allgather_degree}), but the initialized SP world size is not greater than one."
+            f"allgather={allgather_degree}, context_parallel={context_parallel_degree}), "
+            f"but the initialized SP world size is not greater than one."
         )
 
     if allgather_degree > 1:
@@ -75,6 +79,13 @@ def build_parallel_attention_strategy(
             )
         logger.debug(f"Using AllGatherKVParallelAttention (allgather_degree={allgather_degree})")
         return AllGatherKVParallelAttention(sp_group=sp_group)
+
+    if context_parallel_degree > 1:
+        logger.debug(
+            "Using ContextParallelAttention (context_parallel_degree=%d)",
+            context_parallel_degree,
+        )
+        return ContextParallelAttention(sp_group=sp_group)
 
     # Ulysses (or Hybrid Ulysses+Ring)
     if ulysses_degree > 1:

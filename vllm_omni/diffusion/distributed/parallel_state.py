@@ -290,6 +290,14 @@ def get_allgather_parallel_rank():
     return get_sp_group().allgather_rank
 
 
+def get_context_parallel_world_size():
+    return get_sp_group().context_parallel_world_size
+
+
+def get_context_parallel_rank():
+    return get_sp_group().context_parallel_rank
+
+
 def get_expert_parallel_group_ranks() -> list[list[int]]:
     assert _EXPERT_PARALLEL_GROUP_RANKS is not None, "expert parallel group ranks are not initialized"
     return _EXPERT_PARALLEL_GROUP_RANKS
@@ -708,6 +716,7 @@ def _initialize_model_parallel(
     ulysses_degree: int = 1,
     ring_degree: int = 1,
     allgather_degree: int = 1,
+    context_parallel_degree: int = 1,
     tensor_parallel_size: int = 1,
     pipeline_parallel_size: int = 1,
     fully_shard_degree: int = 1,
@@ -727,7 +736,7 @@ def _initialize_model_parallel(
         cfg_parallel_size: number of GPUs used for Classifier Free Guidance (CFG) parallelism.
         sequence_parallel_size: number of GPUs used for sequence parallelism.
             Uses allgather_degree when AllGather-KV is enabled, otherwise
-            ulysses_degree * ring_degree.
+            ulysses_degree * ring_degree * context_parallel_degree.
         ulysses_degree: number of GPUs used for ulysses sequence parallelism.
         ring_degree: number of GPUs used for ring sequence parallelism.
         allgather_degree: number of GPUs used for AllGather-KV sequence parallelism
@@ -778,8 +787,18 @@ def _initialize_model_parallel(
                 f"Got ulysses_degree={ulysses_degree}, ring_degree={ring_degree}, "
                 f"allgather_degree={allgather_degree}."
             )
+        if context_parallel_degree > 1:
+            raise ValueError(
+                "AllGather-KV (allgather_degree>1) is mutually exclusive with context parallelism. "
+                f"Got context_parallel_degree={context_parallel_degree}."
+            )
 
-    expected_sequence_parallel_size = allgather_degree if allgather_degree > 1 else ring_degree * ulysses_degree
+    if context_parallel_degree > 1 and (ulysses_degree > 1 or ring_degree > 1):
+        raise ValueError("context_parallel_degree > 1 is mutually exclusive with Ulysses and Ring.")
+
+    expected_sequence_parallel_size = (
+        allgather_degree if allgather_degree > 1 else ring_degree * ulysses_degree * context_parallel_degree
+    )
     if sequence_parallel_size is None:
         sequence_parallel_size = expected_sequence_parallel_size
         logger.info("sequence_parallel_size is not provided, using %d", sequence_parallel_size)
@@ -866,13 +885,15 @@ def _initialize_model_parallel(
 
     global _SP
     assert _SP is None, "sequence parallel group is already initialized"
+    subgroup_ulysses_degree = 1 if context_parallel_degree > 1 else ulysses_degree
+    subgroup_ring_degree = 1 if context_parallel_degree > 1 else ring_degree
     ulysses_pg, ring_pg, allgather_pg = set_seq_parallel_pg(
-        sp_ulysses_degree=ulysses_degree,
-        sp_ring_degree=ring_degree,
+        sp_ulysses_degree=subgroup_ulysses_degree,
+        sp_ring_degree=subgroup_ring_degree,
         sp_allgather_degree=allgather_degree,
         rank=get_world_group().rank_in_group,
         world_size=world_size,
-        sp_group_ranks=sp_group_ranks,
+        sp_group_ranks=None if context_parallel_degree > 1 else sp_group_ranks,
     )
     _SP = init_model_parallel_group(
         group_ranks=sp_group_ranks,
@@ -882,6 +903,7 @@ def _initialize_model_parallel(
         ulysses_group=ulysses_pg,
         ring_group=ring_pg,
         allgather_group=allgather_pg,
+        context_parallel_degree=context_parallel_degree,
     )
     if use_moe_parallel_mapping:
         # Diffusion normally uses its own SP group. Map it to vLLM PCP only for

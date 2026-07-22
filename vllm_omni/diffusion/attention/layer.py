@@ -486,6 +486,11 @@ class Attention(nn.Module):
                 omni_attn_metadata=attn_metadata,
             )
             out = self.attention.forward_paged(paged_kv_context)
+        elif strategy.name == "context_parallel":
+            # BAGEL's denoise trajectory is highly sensitive to the small
+            # reduction-order differences of asymmetric-Q/K FlashAttention.
+            # SDPA preserves alignment with the established UP reference.
+            out = self.sdpa_fallback.forward(query, key, value, attn_metadata)
         else:
             attn_metadata = self._with_kv_cache_dtype(attn_metadata)
             if self.use_ring and strategy is not self._no_parallel_strategy:
